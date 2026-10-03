@@ -1,0 +1,9 @@
+{
+  "short_name": "Miliano CRM",
+  "name": "Miliano CRM — Soluções Logísticas",
+  "icons": [{ "src": "favicon.svg", "type": "image/svg+xml", "sizes": "any" }],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0B0F17",
+  "background_color": "#0B0F17"
+}

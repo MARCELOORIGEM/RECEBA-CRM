@@ -1,0 +1,35 @@
+# TLS na frente do Miliano CRM.
+#
+# O compose publicava só HTTP na 8080 e o guia mandava "coloque um proxy com
+# TLS na frente" — mas esse pedaço não existia no repositório. Sem ele o cookie
+# de sessão não recebe `Secure` e o CPF, a conta bancária e a senha digitados
+# no formulário público trafegam em claro.
+#
+# O Caddy obtém e renova o certificado Let's Encrypt sozinho, desde que:
+#   - o domínio de DOMINIO aponte (A/AAAA) para o IP deste servidor;
+#   - as portas 80 e 443 estejam abertas na internet — a 80 é usada no desafio
+#     de validação, não dá para fechá-la.
+
+{
+	# E-mail da conta ACME: é por onde a Let's Encrypt avisa que algo deu
+	# errado na renovação, semanas antes do certificado vencer.
+	email {$ACME_EMAIL}
+}
+
+{$DOMINIO} {
+	encode zstd gzip
+
+	header {
+		# Trava o navegador em HTTPS para este domínio. Sem isso, o primeiro
+		# acesso de cada dia ainda sai em HTTP antes do redirecionamento, e é
+		# nessa janela que um ataque na rede rouba o cookie de sessão.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Nada de anunciar a versão do servidor.
+		-Server
+	}
+
+	# O Nginx de dentro serve o painel e repassa /api para a API. O Caddy
+	# acrescenta X-Forwarded-For e X-Forwarded-Proto, que é de onde sai o IP
+	# real usado nos limites por IP (com TRUSTED_PROXY=true na API).
+	reverse_proxy web:80
+}

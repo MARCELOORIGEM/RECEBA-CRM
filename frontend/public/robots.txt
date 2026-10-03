@@ -1,0 +1,4 @@
+# Painel interno e formulário de cadastro com dado pessoal. Nada aqui é para
+# buscador nenhum.
+User-agent: *
+Disallow: /

@@ -1,0 +1,115 @@
+# Roda a suíte a cada push e PR.
+#
+# Os 179 testes de pytest e os roteiros de navegador existiam, mas só rodavam
+# quando alguém lembrava. Aqui eles passam a rodar sozinhos, e um PR que quebra
+# o financeiro ou a permissão por perfil não chega a ser mesclado.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  api:
+    name: Testes da API
+    runs-on: ubuntu-latest
+
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: miliano_ci
+      JWT_SECRET: ci-apenas-para-teste-nao-usar-em-producao
+      FRONTEND_URL: http://localhost:3000
+      AMBIENTE: ci
+      # A suíte não depende de dado fictício: cada teste cria o que precisa.
+      SEED_DEMO_DATA: "false"
+      ADMIN_EMAIL: admin@ci.local
+      ADMIN_PASSWORD: AdminCI@2026
+      MANAGER_EMAIL: gestor@ci.local
+      MANAGER_PASSWORD: GestorCI@2026
+      REACT_APP_BACKEND_URL: http://localhost:8001
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      - name: Instalar dependências
+        working-directory: backend
+        run: pip install -r requirements-dev.txt
+
+      - name: Subir a API
+        working-directory: backend
+        run: |
+          uvicorn server:app --host 127.0.0.1 --port 8001 > api.log 2>&1 &
+          echo $! > api.pid
+
+      - name: Esperar a API ficar de pé
+        run: |
+          # O primeiro boot cria índices e roda as migrações: dar o start por
+          # imediato faria o primeiro teste falhar por corrida, não por bug.
+          for i in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8001/api/health | grep -q '"database":"up"'; then
+              echo "API pronta em ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "A API não subiu. Log:"; cat backend/api.log; exit 1
+
+      - name: pytest
+        working-directory: backend
+        run: pytest tests/ -q
+
+      - name: Log da API quando algo falha
+        if: failure()
+        run: cat backend/api.log
+
+  painel:
+    name: Build do painel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: yarn
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Instalar dependências
+        working-directory: frontend
+        run: yarn install --frozen-lockfile
+
+      - name: Compilar
+        working-directory: frontend
+        # Um build que só quebra na hora do deploy custa caro. Aqui ele quebra
+        # no PR, que é onde dá para arrumar barato.
+        env:
+          REACT_APP_BACKEND_URL: https://exemplo.invalido
+          CI: "false"
+        run: yarn build
+
+  imagens:
+    name: Build das imagens Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: API
+        run: docker build -t miliano-api ./backend
+      - name: Painel
+        run: docker build -t miliano-web --build-arg REACT_APP_BACKEND_URL=https://exemplo.invalido ./frontend

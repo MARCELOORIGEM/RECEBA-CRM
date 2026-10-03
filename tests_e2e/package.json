@@ -1,0 +1,11 @@
+{
+  "name": "miliano-crm-e2e",
+  "private": true,
+  "description": "Roteiros de navegador do Miliano CRM.",
+  "scripts": {
+    "test": "bash rodar.sh"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.49.0"
+  }
+}

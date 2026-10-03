@@ -1,0 +1,28 @@
+# Normalização de fim de linha.
+#
+# O projeto é editado no Windows e roda em Linux (Docker, VPS). Sem isto, um
+# `git add` no Windows grava CRLF nos scripts, e `#!/usr/bin/env bash\r` vira
+# "bad interpreter: no such file or directory" na VPS — erro que não diz nada
+# sobre a causa e custa uma tarde.
+
+* text=auto eol=lf
+
+# Precisam de LF mesmo quando o checkout é no Windows: são executados dentro
+# dos contêineres ou pelo cron do servidor.
+*.sh      text eol=lf
+*.py      text eol=lf
+*.js      text eol=lf
+*.jsx     text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.conf    text eol=lf
+Caddyfile text eol=lf
+Dockerfile text eol=lf
+.env.example text eol=lf
+
+# Binários: nunca converter.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff  binary
+*.woff2 binary

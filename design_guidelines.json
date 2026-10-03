@@ -1,0 +1,265 @@
+{
+  "project_name": "Miliano Business Solutions CRM",
+  "brand_handle": "@recompensalogistica",
+  "language": "pt-BR",
+  "app_type": "dashboard",
+  "context_type": "DASHBOARDS & ADMIN PANELS (Logistics CRM & Control Tower)",
+  "emotional_tone": "High precision, tactical operational control, modern reliability, frictionless dispatch management",
+  "theme": "dark_mode_default_with_light_toggle",
+  "color_palette": {
+    "archetype": "ARCHETYPE 2: THE PERFORMANCE PRO & ARCHETYPE 4: TECHNICAL HIGH CONTRAST",
+    "backgrounds": {
+      "dark": {
+        "page_bg": "#0B0F17",
+        "card_bg": "#111827",
+        "card_border": "#1E293B",
+        "surface_hover": "#1E293B",
+        "sidebar_bg": "#090D14"
+      },
+      "light": {
+        "page_bg": "#F8FAFC",
+        "card_bg": "#FFFFFF",
+        "card_border": "#E2E8F0",
+        "surface_hover": "#F1F5F9",
+        "sidebar_bg": "#0F172A"
+      }
+    },
+    "brand_accents": {
+      "primary": "#F97316",
+      "primary_hover": "#EA580C",
+      "primary_light": "rgba(249, 115, 22, 0.15)",
+      "secondary": "#10B981",
+      "secondary_hover": "#059669",
+      "secondary_light": "rgba(16, 185, 129, 0.15)",
+      "highlight_blue": "#3B82F6",
+      "warning_amber": "#F59E0B",
+      "danger_red": "#EF4444"
+    },
+    "text_colors": {
+      "dark_theme": {
+        "primary": "#F8FAFC",
+        "secondary": "#94A3B8",
+        "muted": "#64748B",
+        "on_brand_button": "#FFFFFF"
+      },
+      "light_theme": {
+        "primary": "#0F172A",
+        "secondary": "#475569",
+        "muted": "#94A3B8",
+        "on_brand_button": "#FFFFFF"
+      }
+    },
+    "status_colors": {
+      "entregue": { "bg": "rgba(16, 185, 129, 0.2)", "text": "#34D399", "border": "rgba(16, 185, 129, 0.3)" },
+      "em_transito": { "bg": "rgba(59, 130, 246, 0.2)", "text": "#60A5FA", "border": "rgba(59, 130, 246, 0.3)" },
+      "aguardando_coleta": { "bg": "rgba(245, 158, 11, 0.2)", "text": "#FBBF24", "border": "rgba(245, 158, 11, 0.3)" },
+      "criado": { "bg": "rgba(148, 163, 184, 0.2)", "text": "#CBD5E1", "border": "rgba(148, 163, 184, 0.3)" },
+      "cancelado": { "bg": "rgba(239, 68, 68, 0.2)", "text": "#F87171", "border": "rgba(239, 68, 68, 0.3)" },
+      "disponivel": { "bg": "rgba(16, 185, 129, 0.2)", "text": "#34D399", "border": "rgba(16, 185, 129, 0.3)" },
+      "indisponivel": { "bg": "rgba(239, 68, 68, 0.2)", "text": "#F87171", "border": "rgba(239, 68, 68, 0.3)" },
+      "pago": { "bg": "rgba(16, 185, 129, 0.2)", "text": "#34D399", "border": "rgba(16, 185, 129, 0.3)" },
+      "pendente": { "bg": "rgba(245, 158, 11, 0.2)", "text": "#FBBF24", "border": "rgba(245, 158, 11, 0.3)" },
+      "atrasado": { "bg": "rgba(239, 68, 68, 0.2)", "text": "#F87171", "border": "rgba(239, 68, 68, 0.3)" }
+    },
+    "tinted_grey_rule": "Never use pure #000000. Use tinting like #0B0F17 or #0F172A with Slate tones for high accessibility and deep visual contrast."
+  },
+  "typography": {
+    "font_family_headings": "Plus Jakarta Sans, Outfit, sans-serif",
+    "font_family_body": "DM Sans, sans-serif",
+    "font_family_mono": "JetBrains Mono, monospace",
+    "heading_rules": {
+      "H1": "text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-slate-900 dark:text-slate-50",
+      "H2": "text-2xl sm:text-3xl font-bold tracking-tight text-slate-900 dark:text-slate-100",
+      "H3": "text-xl sm:text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-100",
+      "H4": "text-lg font-semibold text-slate-800 dark:text-slate-200"
+    },
+    "body_rules": {
+      "text_base": "text-sm sm:text-base font-normal leading-relaxed text-slate-600 dark:text-slate-300",
+      "text_small": "text-xs sm:text-sm font-normal text-slate-500 dark:text-slate-400",
+      "label": "text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400"
+    },
+    "forbidden_fonts": ["Space Grotesk"]
+  },
+  "layout_and_spacing": {
+    "strategy": "MODE B: High Density Dashboard Grid + Precise Command Bar Layout",
+    "container_padding": "p-4 sm:p-6 lg:p-8 space-y-6",
+    "grid_structure": {
+      "summary_cards": "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6",
+      "analytics_main": "grid grid-cols-1 lg:grid-cols-12 gap-6 align-items-start",
+      "hero_widget": "lg:col-span-8 space-y-6",
+      "side_feed": "lg:col-span-4 space-y-6"
+    },
+    "card_style": "rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-sm p-5 hover:border-slate-300 dark:hover:border-slate-700 transition-colors",
+    "sticky_nav": "sticky top-0 z-40 backdrop-blur-xl bg-white/80 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 px-6 py-4 flex items-center justify-between"
+  },
+  "visual_enhancers": {
+    "glassmorphism": "backdrop-blur-xl bg-slate-900/90 border border-slate-800 shadow-2xl",
+    "live_indicators": "flex items-center gap-2 text-xs font-medium text-emerald-400 before:content-[''] before:w-2 before:h-2 before:rounded-full before:bg-emerald-500 before:animate-pulse",
+    "tracing_beam": "relative overflow-hidden before:absolute before:inset-0 before:bg-gradient-to-r before:from-orange-500/10 before:via-transparent before:to-transparent before:pointer-events-none",
+    "custom_scrollbars": "scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900"
+  },
+  "components_and_ui": {
+    "primitives": "Shadcn UI React components styled with Tailwind CSS (.js / .jsx implementation)",
+    "icons_library": "lucide-react",
+    "charts_library": "recharts (LineChart, BarChart, PieChart, ResponsiveContainer, Tooltip, Legend)",
+    "toast_library": "sonner",
+    "interactive_components": [
+      "DataTable with sorting, search input, status filters, pagination",
+      "Modal / Dialog for Restaurant registration & editing",
+      "Sheet / Drawer for Driver detail, vehicle specs & payout summary",
+      "Contract creation & payment status updater (Manual payment entry with proof upload simulator)",
+      "Dispatch map view / real-time delivery tracker timeline",
+      "Date Range Picker & Filter presets for operational reports",
+      "API Webhook & Integration key generator screen"
+    ]
+  },
+  "modules_specification": {
+    "auth_screen": {
+      "path": "/login",
+      "elements": [
+        "Brand Logo & Header (@recompensalogistica)",
+        "Email & Password Input fields with eye toggle",
+        "Role selection (Administrador vs Gestor Operacional)",
+        "Submit Login button with loading state",
+        "Demo fast-fill buttons (Admin / Gestor) for rapid test review"
+      ]
+    },
+    "dashboard_home": {
+      "path": "/",
+      "elements": [
+        "Top Command Bar with Live Clock, Notifications & Quick Actions",
+        "4 KPI Metric Cards: Entregas Hoje, Taxa de Sucesso (%), Restaurantes Ativos, Entregadores Online",
+        "Financial Turnover & Payout Summary Widget (Manual contract billing overview)",
+        "Volume de Entregas por Hora Chart (Recharts Area/Line)",
+        "Entregas por Região / Categoria (Recharts Bar/Pie)",
+        "Feed de Entregas em Tempo Real (Live status timeline with courier assignment)",
+        "Alerta de Repasses Pendentes (Drivers/Restaurants due manual payout)"
+      ]
+    },
+    "restaurants_crud": {
+      "path": "/restaurantes",
+      "elements": [
+        "Restaurant Table with columns: Nome, Categoria, Contato, Taxa de Comissão (%), Pedidos/Mês, Status, Ações",
+        "Filter by status (Ativo, Suspenso, Em Análise) and search by name/CNPJ",
+        "Novo Restaurante Dialog/Modal form",
+        "Detail Drawer with active contract terms, address, contact person, order history"
+      ]
+    },
+    "delivery_drivers_crud": {
+      "path": "/entregadores",
+      "elements": [
+        "Driver Grid / Table with avatar photo, name, vehicle type (Moto, Bike, Carro), phone, status badge, rating",
+        "Status switch (Disponível, Em Entrega, Offline)",
+        "Cadastro de Entregador Modal form",
+        "Profile Drawer with total deliveries, balance to receive, vehicle details, document status"
+      ]
+    },
+    "contracts_and_payments": {
+      "path": "/contratos-pagamentos",
+      "elements": [
+        "Financial metrics cards: Faturamento Bruto, Repasse a Entregadores, Receita Restaurantes, Pendentes de Pagamento",
+        "Contract Rules manager (Taxa fixa mensal, Valor por KM, Comissão por entrega)",
+        "Payment Control Table: Credor (Restaurante/Entregador), Valor R$, Data Vencimento, Método (PIX/Transferência), Status (Pago, Pendente, Atrasado)",
+        "Action to mark payment as manually settled (Registrar Pagamento Manual) with upload proof simulation"
+      ]
+    },
+    "orders_control": {
+      "path": "/pedidos",
+      "elements": [
+        "Live Dispatch Control Board",
+        "Order Status Filter Tabs: Todos, Criados, Aguardando Coleta, Em Trânsito, Entregues, Cancelados",
+        "Quick Courier Re-assignment dropdown",
+        "Order Detail Timeline modal with pickup restaurant, dropoff customer address, courier info, timestamps"
+      ]
+    },
+    "reports_and_analytics": {
+      "path": "/relatorios",
+      "elements": [
+        "Date Range Selector & Export PDF/CSV action buttons",
+        "Desempenho por Entregador & Restaurante (Bar & Radar charts)",
+        "Relatório de SLA e Tempo Médio de Entrega",
+        "Balanço Financeiro Mensal (Tabela detalhada de repasses e comissões)"
+      ]
+    },
+    "api_integrations": {
+      "path": "/integracoes",
+      "elements": [
+        "API Keys Generator (Production & Sandbox)",
+        "Webhook endpoints config for iFood, Rappi, Delivery Much, POS system integrations",
+        "Simulated Live Webhook Payload Logger"
+      ]
+    }
+  },
+  "media_assets": {
+    "couriers": [
+      {
+        "url": "https://images.unsplash.com/photo-1782971814662-028cd9e840c3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwzfHxsb2dpc3RpY3MlMjBkZWxpdmVyeSUyMG1vdG9yJTIwc2Nvb3RlciUyMGRyaXZlciUyMHVyYmFuJTIwZGVsaXZlcnl8ZW58MHx8fHwxNzg4Nzk5MjYyfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Motoboy entregador urbano em deslocamento com baú de entregas",
+        "usage": "Banner do Dashboard e ilustração de frota de entregas"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1695927621677-ec96e048dce2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwzfHxicmF6aWxpYW4lMjBjb3VyaWVyJTIwcGVyc29uJTIwcG9ydHJhaXQlMjBoZWFkc2hvdHxlbnwwfHx8fDE3ODg3OTkyNjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Foto de perfil de entregador (Lucas Silva - Motoboy)",
+        "usage": "Avatar do entregador no CRUD e detalhes"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1535643302794-19c3804b874b?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwxfHxicmF6aWxpYW4lMjBjb3VyaWVyJTIwcGVyc29uJTIwcG9ydHJhaXQlMjBoZWFkc2hvdHxlbnwwfHx8fDE3ODg3OTkyNjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Foto de perfil de entregador (Roberto Santos - Bicicleta)",
+        "usage": "Avatar do entregador no CRUD"
+      }
+    ],
+    "restaurants": [
+      {
+        "url": "https://images.unsplash.com/photo-1577219491135-ce391730fb2c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHw0fHxyZXN0YXVyYW50JTIwZm9vZCUyMGtpdGNoZW4lMjBnb3VybWV0JTIwY2hlZnxlbnwwfHx8fDE3ODg3OTkyNjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Cozinha profissional de restaurante parceiro",
+        "usage": "Capa / Imagem de fundo no detalhe do Restaurante"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1622021142947-da7dedc7c39a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzV8MHwxfHNlYXJjaHwzfHxyZXN0YXVyYW50JTIwZm9vZCUyMGtpdGNoZW4lMjBnb3VybWV0JTIwY2hlZnxlbnwwfHx8fDE3ODg3OTkyNjZ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Chefe preparando prato em restaurante contratado",
+        "usage": "Avatar / Card de Restaurante em destaque"
+      }
+    ]
+  },
+  "accessibility_and_testing": {
+    "wcag_level": "WCAG AA Standard (Minimum 4.5:1 text contrast)",
+    "data_testid_policy": "MANDATORY: All interactive elements, status badges, submit buttons, modals, table cells, and metrics must have descriptive kebab-case data-testid attributes.",
+    "data_testid_examples": [
+      "data-testid=\"login-email-input\"",
+      "data-testid=\"login-submit-button\"",
+      "data-testid=\"sidebar-link-dashboard\"",
+      "data-testid=\"sidebar-link-restaurantes\"",
+      "data-testid=\"sidebar-link-entregadores\"",
+      "data-testid=\"sidebar-link-contratos\"",
+      "data-testid=\"sidebar-link-pedidos\"",
+      "data-testid=\"kpi-metric-entregas-hoje\"",
+      "data-testid=\"kpi-metric-faturamento\"",
+      "data-testid=\"btn-novo-restaurante\"",
+      "data-testid=\"btn-novo-entregador\"",
+      "data-testid=\"btn-registrar-pagamento\"",
+      "data-testid=\"search-restaurante-input\"",
+      "data-testid=\"table-restaurante-row-1\"",
+      "data-testid=\"status-badge-pedido-101\""
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Use JavaScript (.js / .jsx) components matching existing project setup.",
+    "Implement full Portuguese (pt-BR) terminology tailored for Miliano Business Solutions (@recompensalogistica).",
+    "Ensure crisp layout with dark theme as primary visual style, with smooth toggle to light theme.",
+    "Prioritize smooth user flows with reactive state (search, filter, pagination, modal forms, status updates, toasts via Sonner).",
+    "Include mock data pre-populated with realistic Brazilian restaurants (e.g., 'Brito Burguer', 'Pizzaria Bella Napoli', 'Sabor Mineiro') and couriers (e.g., 'Carlos Eduardo', 'Matheus Oliveira', 'Fernanda Lima').",
+    "Contracts & Payments must clearly support manual payment tracking (Pendente, Pago, Atrasado), value calculations, and manual proof settlement simulator.",
+    "Maintain strict data-testid attributes across all components for automated testing compliance.",
+    "Never leave empty state or broken UI elements; provide rich mock interactions for all buttons and modals."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "design_anti_patterns": [
+      "No default unstyled tables",
+      "No generic un-tinted pure black background (#000000)",
+      "No missing focus/hover states on buttons",
+      "No transparent dropdown/modal backgrounds without blur/solid fill"
+    ],
+    "micro_interactions": "Add smooth hover transitions, pulse indicators on live delivery status, and Sonner toast notifications on create/update actions.",
+    "spacing_philosophy": "Use generous internal padding (p-4 to p-6 inside cards) to avoid visual collision."
+  }
+}

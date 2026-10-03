@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR" class="dark">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#0B0F17" />
+        <meta name="description" content="CRM da Miliano Business Solutions: funil comercial, cadastros, pedidos e controle financeiro." />
+        <!-- Painel interno e formulário de cadastro: nada aqui deve ser
+             indexado nem aparecer em busca. -->
+        <meta name="robots" content="noindex, nofollow" />
+        <link rel="icon" type="image/svg+xml" href="%PUBLIC_URL%/favicon.svg" />
+        <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@600&display=swap" rel="stylesheet" />
+
+        <title>Miliano CRM — Soluções Logísticas</title>
+
+        <!-- Ruído de telemetria do navegador que o React dev tools dispara em
+             algumas versões do Chrome; não é erro da aplicação. -->
+        <script>window.addEventListener("error",function(e){if(e.error instanceof DOMException&&e.error.name==="DataCloneError"&&e.message&&e.message.includes("PerformanceServerTiming")){e.stopImmediatePropagation();e.preventDefault()}},true);</script>
+
+        <!-- NÃO adicione scripts de terceiros aqui.
+             Esta página carrega o formulário público, onde entregadores
+             digitam CPF, conta bancária e chave PIX. Qualquer script externo
+             passa a enxergar esses campos e vira dado pessoal saindo da
+             empresa sem base legal.
+             Vieram do andaime do projeto e foram removidos: o PostHog
+             (phc_Dbs…, api_host ap.emergent.sh), o assets.emergent.sh e um
+             injetor de challenge da Cloudflare que ficou colado no arquivo. -->
+    </head>
+    <body>
+        <noscript>Este painel precisa de JavaScript habilitado.</noscript>
+        <div id="root"></div>
+    </body>
+</html>

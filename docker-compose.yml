@@ -1,0 +1,145 @@
+# Miliano CRM — pilha completa para produção.
+#
+#   docker compose up -d --build
+#
+# Sobe quatro serviços: MongoDB com autenticação, a API, o painel servido por
+# Nginx e o Caddy terminando TLS na frente de tudo. Todos os segredos vêm do
+# arquivo .env na raiz (veja .env.example) — nenhum valor sensível fica aqui.
+#
+# Quem já tem um proxy com TLS na infra sobe sem o Caddy:
+#   docker compose up -d --build mongo api web
+# e aponta esse proxy para 127.0.0.1:${PORTA_HTTP}.
+
+# Rotação de log, aplicada a todo serviço. Sem isto o driver json-file do
+# Docker cresce sem teto até encher o disco da VPS — e disco cheio derruba o
+# Mongo, que é onde está o sistema inteiro.
+x-log: &log
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    <<: *log
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${DB_NAME}
+      # Lidos pelo script de inicialização para criar o usuário da aplicação.
+      APP_USER: ${MONGO_APP_USER}
+      APP_PASSWORD: ${MONGO_APP_PASSWORD}
+    volumes:
+      - mongo_dados:/data/db
+      - ./infra/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - ./backups:/backups
+    # SEM `ports`: o banco só é alcançável pela rede interna do compose.
+    # Publicar 27017 no host é o caminho mais curto para alguém de fora ler
+    # CPF e conta bancária.
+    # O Mongo toma a memória que encontrar. Sem teto, num pico ele leva a
+    # máquina inteira junto e o kernel escolhe quem morre.
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_MONGO:-2g}
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    <<: *log
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URL: mongodb://${MONGO_APP_USER}:${MONGO_APP_PASSWORD}@mongo:27017/${DB_NAME}?authSource=${DB_NAME}
+      DB_NAME: ${DB_NAME}
+      JWT_SECRET: ${JWT_SECRET}
+      FRONTEND_URL: ${FRONTEND_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      MANAGER_EMAIL: ${MANAGER_EMAIL}
+      MANAGER_PASSWORD: ${MANAGER_PASSWORD}
+      TIMEZONE: ${TIMEZONE:-America/Sao_Paulo}
+      # Também decide o CORS: em "producao" a lista é só o domínio real.
+      AMBIENTE: ${AMBIENTE:-producao}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      ALLOW_PUBLIC_REGISTER: ${ALLOW_PUBLIC_REGISTER:-false}
+      # Há um Nginx (e o Caddy) na frente reescrevendo X-Forwarded-For.
+      TRUSTED_PROXY: "true"
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      PRIVACIDADE_URL: ${PRIVACIDADE_URL:-}
+      # Teto de envios do formulário público por IP, por hora.
+      MAX_ENVIOS_POR_IP: ${MAX_ENVIOS_POR_IP:-10}
+    expose:
+      - "8000"
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_API:-1g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        # O endereço da API entra no bundle em tempo de build — não dá para
+        # trocar depois sem recompilar.
+        REACT_APP_BACKEND_URL: ${PUBLIC_API_URL}
+    restart: unless-stopped
+    <<: *log
+    depends_on:
+      - api
+    # Publicado só no loopback: quem fala com a internet é o Caddy, em HTTPS.
+    # Antes isto saía em 0.0.0.0, deixando a porta HTTP aberta ao lado da
+    # HTTPS — e o cookie de sessão viaja sem `Secure` por ela.
+    ports:
+      - "${BIND_HTTP:-127.0.0.1}:${PORTA_HTTP:-8080}:80"
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_WEB:-256m}
+
+  proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    <<: *log
+    depends_on:
+      - web
+    environment:
+      DOMINIO: ${DOMINIO}
+      ACME_EMAIL: ${ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Os certificados vivem aqui. Perder este volume faz o Caddy pedir tudo
+      # de novo à Let's Encrypt, que limita emissões por domínio por semana.
+      - caddy_dados:/data
+      - caddy_config:/config
+    deploy:
+      resources:
+        limits:
+          memory: ${MEM_PROXY:-256m}
+
+volumes:
+  mongo_dados:
+  caddy_dados:
+  caddy_config:

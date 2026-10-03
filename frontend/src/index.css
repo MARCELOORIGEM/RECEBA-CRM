@@ -1,0 +1,150 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Yellowtail&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'DM Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, .font-heading {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+}
+
+.font-mono {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+@layer base {
+    :root {
+        --miliano-gold: #F5A524;
+        --miliano-gold-glow: #FFB84D;
+        --miliano-silver: #D8DBE0;
+        --background: 210 40% 98%;
+        --foreground: 222 47% 11%;
+        --card: 0 0% 100%;
+        --card-foreground: 222 47% 11%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222 47% 11%;
+        --primary: 37 91% 55%;
+        --primary-foreground: 24 30% 8%;
+        --secondary: 210 40% 96%;
+        --secondary-foreground: 222 47% 11%;
+        --muted: 210 40% 96%;
+        --muted-foreground: 215 16% 47%;
+        --accent: 210 40% 94%;
+        --accent-foreground: 222 47% 11%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 214 32% 91%;
+        --input: 214 32% 91%;
+        --ring: 37 91% 55%;
+        --radius: 0.75rem;
+    }
+    .dark {
+        /* Grafite quente do logo, não o azulado padrão do Tailwind. */
+        --background: 220 6% 5%;
+        --foreground: 220 9% 96%;
+        --card: 225 6% 9%;
+        --card-foreground: 220 9% 96%;
+        --popover: 225 7% 8%;
+        --popover-foreground: 220 9% 96%;
+        /* Dourado #F5A524 */
+        --primary: 37 91% 55%;
+        --primary-foreground: 24 30% 8%;
+        --secondary: 222 6% 15%;
+        --secondary-foreground: 220 9% 96%;
+        --muted: 222 6% 14%;
+        --muted-foreground: 220 7% 56%;
+        --accent: 222 6% 15%;
+        --accent-foreground: 220 9% 96%;
+        --destructive: 0 62% 45%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 222 7% 16%;
+        --input: 222 7% 15%;
+        --ring: 37 91% 55%;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+@keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 0.5s ease-out both; }
+
+
+/* ---------------------------------------------------------------- *
+ * Marca Miliano
+ * ---------------------------------------------------------------- */
+
+/* Letreiro cromado: o gradiente é pintado no próprio texto. O
+   `text-transparent` é obrigatório — sem ele o recorte não aparece. */
+.texto-prata {
+    background: linear-gradient(180deg, #FFFFFF 0%, #D8DBE0 38%, #8B8F98 55%, #EDEEF0 78%, #B4B7BE 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+.texto-dourado {
+    background: linear-gradient(180deg, #FFD28F 0%, #F5A524 45%, #C97F10 72%, #FFC15E 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+
+/* Brilho que atravessa o letreiro devagar, como a luz do logo impresso. */
+.brilho-passante {
+    background-image: linear-gradient(
+        100deg,
+        transparent 20%,
+        rgba(255, 255, 255, 0.85) 42%,
+        rgba(255, 210, 143, 0.9) 50%,
+        transparent 72%
+    );
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: shine 6s linear infinite;
+}
+
+.sombra-dourada {
+    box-shadow: 0 0 24px -4px rgba(245, 165, 36, 0.45);
+}
+
+@keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 0.5s ease-out both; }
+
+/* Movimento é enfeite: quem pediu menos animação no sistema não recebe
+   nenhuma. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
