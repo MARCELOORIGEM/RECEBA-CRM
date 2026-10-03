@@ -24,3 +24,6 @@ tzdata==2024.2
 # importava dentro de try/except e caía no ImportError, então a instalação
 # subia achando que tinha rastreio de erro e não tinha.
 sentry-sdk==2.19.2
+# Driver PostgreSQL assíncrono. Entra junto com motor/pymongo durante a
+# migração; os dois do Mongo saem quando o último router for traduzido.
+asyncpg==0.30.0
