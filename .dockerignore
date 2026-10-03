@@ -1,0 +1,37 @@
+# O contexto deste build é a raiz do repositório, e tudo que entra nele é
+# enviado ao daemon antes da primeira linha rodar. Sem esta lista, o
+# node_modules e o .venv iriam junto: minutos de upload e uma imagem inchada.
+
+.git/
+.github/
+
+# Segredos. O .dockerignore é a última barreira: um `.env` que escape daqui
+# fica gravado numa camada da imagem, de onde qualquer um que a baixe extrai.
+.env
+.env.*
+!.env.example
+**/.env
+!**/.env.example
+
+# Dependências — reinstaladas dentro da imagem, a partir dos lockfiles.
+**/node_modules/
+**/.venv/
+**/venv/
+**/__pycache__/
+**/*.py[cod]
+
+# Artefatos de build locais; a imagem gera os seus.
+frontend/build/
+**/.cache/
+**/.pytest_cache/
+
+# Nada disto serve em produção.
+backups/
+tests_e2e/
+test_reports/
+.emergent/
+memory/
+**/*.bak
+**/*.log
+*.md
+!backend/**/*.md

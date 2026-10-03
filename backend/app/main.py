@@ -1,9 +1,11 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import APIRouter, FastAPI, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pymongo.errors import DuplicateKeyError, PyMongoError
 from starlette.middleware.cors import CORSMiddleware
 
@@ -102,3 +104,42 @@ async def mongo_handler(request: Request, exc: PyMongoError):
     return JSONResponse(
         status_code=503, content={"detail": "Banco de dados indisponível. Tente novamente."}
     )
+
+
+# --------------------------------------------------------------- o painel
+# Em plataforma de um serviço só (Railway, Render, Fly), a própria API serve o
+# bundle do React. Isso elimina a classe inteira de problema que dois domínios
+# criam: sem CORS, sem SameSite=None, sem cookie que o navegador descarta em
+# silêncio — o painel e a API passam a ser a mesma origem.
+#
+# No docker compose continuam separados, com o Nginx na frente; lá esta pasta
+# não existe e o bloco inteiro é ignorado.
+PASTA_PAINEL = Path(__file__).resolve().parent.parent / "painel"
+
+if (PASTA_PAINEL / "index.html").is_file():
+    # Os arquivos com hash no nome ficam sob /static e podem ir para cache
+    # eterno; o StaticFiles cuida de Content-Type e Range.
+    if (PASTA_PAINEL / "static").is_dir():
+        app.mount(
+            "/static", StaticFiles(directory=PASTA_PAINEL / "static"), name="painel-estatico"
+        )
+
+    @app.get("/{caminho:path}", include_in_schema=False)
+    async def servir_painel(caminho: str):
+        """Aplicação de página única: qualquer rota cai no index."""
+        # Esta rota é registrada por último, então /api/... já casou antes de
+        # chegar aqui. A exceção é um caminho de API que não existe: sem a
+        # guarda abaixo ele receberia o index.html com status 200, e o cliente
+        # tentaria ler HTML como JSON em vez de ver um 404 honesto.
+        if caminho.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Rota não encontrada")
+
+        alvo = (PASTA_PAINEL / caminho).resolve()
+        # `resolve()` + verificação de prefixo: sem isso, "../../etc/passwd"
+        # sairia da pasta do painel.
+        dentro = PASTA_PAINEL.resolve() in alvo.parents
+        if caminho and dentro and alvo.is_file():
+            return FileResponse(alvo)
+        return FileResponse(PASTA_PAINEL / "index.html")
+
+    logger.info("Painel servido pela API, a partir de %s", PASTA_PAINEL)

@@ -35,7 +35,21 @@ class Settings:
         # agenda; em UTC, o dia virava às 21h no horário de São Paulo.
         self.timezone = os.environ.get("TIMEZONE", "America/Sao_Paulo")
 
-        self.frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3000")
+        # Domínio do painel. No Railway (e em Render/Fly) a plataforma injeta o
+        # domínio público e ele muda a cada ambiente novo; exigir que alguém
+        # copie o valor à mão para FRONTEND_URL é uma falha que não aparece no
+        # log — com o esquema errado, o cookie de sessão sai sem `Secure`, o
+        # navegador o descarta em silêncio, o login responde 200 e a sessão
+        # simplesmente não gruda. A variável explícita continua vencendo.
+        dominio_da_plataforma = (
+            os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+            or os.environ.get("RENDER_EXTERNAL_HOSTNAME")
+            or ""
+        ).strip()
+        padrao_frontend = (
+            f"https://{dominio_da_plataforma}" if dominio_da_plataforma else "http://localhost:3000"
+        )
+        self.frontend_url = os.environ.get("FRONTEND_URL", "").strip() or padrao_frontend
 
         # Cookies cross-site (SameSite=None) exigem HTTPS. Em dev HTTP isso faz o
         # navegador descartar o cookie silenciosamente: o login "passa" e a sessão
