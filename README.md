@@ -316,7 +316,7 @@ aparece do outro lado:
 
 ```bash
 cd tests_e2e && npm install        # uma vez
-BASE=http://localhost:3000 ADMIN_EMAIL=... ADMIN_PASSWORD=... ./rodar.sh
+BASE=http://localhost:3000 ./rodar.sh   # credenciais vêm do backend/.env
 ```
 
 São ~79 conferências cobrindo o painel inteiro, o perfil do gestor, o

@@ -5,9 +5,19 @@ Os testes falam HTTP com a API, então rodam tanto contra o backend local
 """
 import os
 import uuid
+from pathlib import Path
 
 import pytest
 import requests
+from dotenv import load_dotenv
+
+# As credenciais saíram do código (ver abaixo), mas rodar a suíte local não
+# deveria exigir exportar quatro variáveis à mão. O backend/.env já tem as
+# contas desta instalação e já é ignorado pelo Git: ler dele é o caminho que
+# funciona sem configuração e sem segredo versionado.
+# `override=False`: o que já estiver no ambiente ganha — é assim que o CI
+# aponta a suíte para as contas dele.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 BASE_URL = os.environ.get(
     "REACT_APP_BACKEND_URL", "http://localhost:8001"
