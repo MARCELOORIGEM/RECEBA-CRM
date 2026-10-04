@@ -111,3 +111,8 @@ test_reports/
 
 # Estado do vigia e logs do cron, gravados em backups/ (já ignorado acima).
 *.log
+
+# Painel compilado copiado para dentro da API (é o que a imagem do Railway
+# faz). Localmente só existe para teste; versionado, mandaria um bundle velho
+# para o repositório.
+/backend/painel/
