@@ -83,7 +83,7 @@ claro na tela.
 - `FRONTEND_URL` — sem ela, a aplicação usa `RAILWAY_PUBLIC_DOMAIN`, que a
   plataforma injeta. É o que liga `Secure` no cookie. Defina só se usar
   domínio próprio.
-- `TRUSTED_PROXY` — já vem ligado pelo proxy do Railway.
+- `TRUSTED_PROXY` — não precisa: o comando da imagem já sobe o uvicorn com `--proxy-headers`, que lê o IP real do `X-Forwarded-For` do Railway.
 - As chaves `sb_secret_` e `sb_publishable_` do Supabase: o CRM fala direto
   com o Postgres e não usa a API REST deles.
 

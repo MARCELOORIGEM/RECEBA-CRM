@@ -40,9 +40,9 @@ jobs:
       AMBIENTE: ci
       # A suíte não depende de dado fictício: cada teste cria o que precisa.
       SEED_DEMO_DATA: "false"
-      ADMIN_EMAIL: admin@ci.local
+      ADMIN_EMAIL: admin@miliano-ci.com.br
       ADMIN_PASSWORD: AdminCI@2026
-      MANAGER_EMAIL: gestor@ci.local
+      MANAGER_EMAIL: gestor@miliano-ci.com.br
       MANAGER_PASSWORD: GestorCI@2026
       REACT_APP_BACKEND_URL: http://localhost:8001
 

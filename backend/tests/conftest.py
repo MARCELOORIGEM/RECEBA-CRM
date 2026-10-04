@@ -29,11 +29,11 @@ TIMEOUT = 20
 # publicado, isso é a conta do sistema entregue a quem clonar — e os testes
 # rodam igual lendo do ambiente, que é de onde o CI já os passa.
 ADMIN = {
-    "email": os.environ.get("ADMIN_EMAIL", "admin@local.test"),
+    "email": os.environ.get("ADMIN_EMAIL", "admin@miliano-teste.com.br"),
     "password": os.environ.get("ADMIN_PASSWORD", "SenhaLocal@2026"),
 }
 MANAGER = {
-    "email": os.environ.get("MANAGER_EMAIL", "gestor@local.test"),
+    "email": os.environ.get("MANAGER_EMAIL", "gestor@miliano-teste.com.br"),
     "password": os.environ.get("MANAGER_PASSWORD", "SenhaLocal@2026"),
 }
 

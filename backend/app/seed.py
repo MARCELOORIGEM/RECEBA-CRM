@@ -68,6 +68,17 @@ async def migrar_emails() -> None:
         logger.info("Conta %s renomeada para %s", antigo, novo)
 
 
+def _email_entra(email: str) -> bool:
+    """O mesmo validador da tela de login (`LoginInput.email`)."""
+    from pydantic import EmailStr, TypeAdapter, ValidationError
+
+    try:
+        TypeAdapter(EmailStr).validate_python(email)
+        return True
+    except ValidationError:
+        return False
+
+
 async def seed_users() -> None:
     pares = [
         (settings.admin_email, settings.admin_password, "Rafael (Admin)", "admin"),
@@ -75,6 +86,15 @@ async def seed_users() -> None:
     ]
     for email, pwd, name, role in pares:
         if not email or not pwd:
+            continue
+        if not _email_entra(email):
+            # A conta seria criada, mas a tela de login recusa o e-mail antes
+            # de conferir a senha — ninguém conseguiria entrar com ela. Foi o
+            # que derrubou o CI: `admin@ci.local` (".local" é domínio reservado).
+            logger.error(
+                "E-mail %r não é aceito no login (domínio reservado ou inválido). "
+                "A conta NÃO foi criada; corrija ADMIN_EMAIL/MANAGER_EMAIL.", email
+            )
             continue
         # A senha do .env só vale na criação da conta. Reescrevê-la a cada boot
         # desfazia silenciosamente qualquer troca feita pelo próprio usuário em
