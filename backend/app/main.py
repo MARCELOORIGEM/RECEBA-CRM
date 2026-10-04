@@ -1,4 +1,5 @@
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -136,6 +137,11 @@ async def banco_fora_handler(request: Request, exc: Exception):
 # No docker compose continuam separados, com o Nginx na frente; lá esta pasta
 # não existe e o bloco inteiro é ignorado.
 PASTA_PAINEL = Path(__file__).resolve().parent.parent / "painel"
+
+# A imagem python:slim não traz a tabela de tipos do sistema, e .webp sai como
+# text/plain — o logo do painel é WebP. O navegador ainda desenha, mas um
+# proxy ou CDN no meio pode recusar ou guardar errado.
+mimetypes.add_type("image/webp", ".webp")
 
 if (PASTA_PAINEL / "index.html").is_file():
     # Os arquivos com hash no nome ficam sob /static e podem ir para cache
