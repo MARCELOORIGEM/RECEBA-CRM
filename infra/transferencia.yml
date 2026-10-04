@@ -1,0 +1,27 @@
+# Override do compose usado UMA vez, para copiar os dados do Mongo antigo para
+# o PostgreSQL. Ver PRODUCAO.md, seção 1.1.
+#
+#   docker compose -f docker-compose.yml -f infra/transferencia.yml up -d db mongo-antigo
+#
+# Publica os dois bancos SÓ no loopback (127.0.0.1), para o script rodar no
+# próprio servidor. Terminada a cópia, suba de novo sem este arquivo: a porta
+# do PostgreSQL volta a ficar fechada.
+
+services:
+  db:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # O Mongo da versão anterior, ligado ao volume de dados que já existe na
+  # máquina (`<projeto>_mongo_dados`, o mesmo nome que o compose antigo criava).
+  # Sobe SEM as variáveis MONGO_INITDB_*, então sem exigir senha — aceitável
+  # porque só escuta no loopback e vive apenas durante a cópia.
+  mongo-antigo:
+    image: mongo:7
+    volumes:
+      - mongo_dados:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"
+
+volumes:
+  mongo_dados:

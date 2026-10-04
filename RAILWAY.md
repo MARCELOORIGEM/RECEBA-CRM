@@ -2,9 +2,11 @@
 
 Guia do deploy em plataforma de serviço único, com o banco no Supabase.
 
-> **Estado atual:** a configuração desta página está pronta e commitada, mas o
-> sistema **ainda não sobe** — os routers continuam falando MongoDB, e a
-> migração para PostgreSQL está na etapa 2 de 6. Ver "O que falta", no fim.
+> **Região:** crie o serviço do Railway e o projeto do Supabase na **mesma
+> região**. A API faz algumas consultas por requisição; com o banco em outro
+> continente cada uma paga a viagem (medido: ~380 ms do Brasil até o Supabase
+> em `us-west-2`), e as telas passam de um segundo para abrir. Na mesma região,
+> a viagem é de poucos milissegundos.
 
 ---
 
@@ -66,6 +68,14 @@ colchetes **não** fazem parte dela. Deixá-los faz a conexão falhar reclamando
 de credencial inválida, sem mencionar colchete nenhum — é meia hora de
 depuração no lugar errado.
 
+**Conexões com o banco.** O pooler do Supabase na porta 5432 aceita **15
+clientes no total** (plano gratuito). A imagem sobe 2 workers (`WEB_CONCURRENCY`)
+e cada um abre até 5 conexões (`PG_POOL_MAX`): 10, com folga para o SQL Editor.
+Se aumentar um dos dois, confira que `WEB_CONCURRENCY × PG_POOL_MAX` continua
+abaixo do *Pool size* do plano — o que passa do limite é recusado com
+`EMAXCONNSESSION`, e a requisição fica esperando até cair por timeout, sem erro
+claro na tela.
+
 **O que você NÃO precisa definir:**
 
 - `PORT` — o Railway injeta, e o valor muda entre deploys. O Dockerfile usa
@@ -102,7 +112,7 @@ Depois entre com `ADMIN_EMAIL`, vá em **Minha conta** e troque a senha. A do
 |---|---|---|
 | TLS | Caddy, no repositório | da plataforma |
 | Painel | Nginx, serviço separado | servido pela API |
-| Banco | Mongo no compose | Supabase |
+| Banco | PostgreSQL no compose | Supabase |
 | Porta | 8080 fixa | `$PORT`, injetada |
 | Backup | `scripts/backup.sh` + cron | do Supabase |
 | Vigia | `scripts/vigia.sh` no cron | healthcheck da plataforma |
@@ -114,19 +124,10 @@ ligado e com qual retenção, porque no plano gratuito ele é limitado.
 
 ---
 
-## O que falta para funcionar
+## Vindo de uma instalação em MongoDB
 
-A migração de MongoDB para PostgreSQL está **na etapa 2 de 6**:
-
-- [x] Schema das 18 tabelas, índices e RLS, aplicados no Supabase
-- [x] Construtor de filtros SQL, com 25 testes
-- [ ] Camada de conexão (`db.py` em asyncpg) e `repo.py`
-- [ ] 13 routers — 298 operações de banco
-- [ ] `seed.py` e as 10 agregações do painel
-- [ ] Os 179 testes passando
-
-Enquanto isso não termina, o contêiner **sobe e morre**: o `lifespan` chama
-`ensure_indexes()` contra um MongoDB que não existe no Railway, o
-`/api/health` nunca responde e a plataforma derruba o deploy.
-
-Publicar antes disso não adianta — não é configuração faltando, é código.
+O banco novo nasce vazio. Para trazer os dados de uma VPS que rodava a versão
+em Mongo, use `scripts/mongo_para_postgres.py` com a `DATABASE_URL` do Supabase,
+**antes** do primeiro deploy (a API cria as contas iniciais no boot, e o script
+só aceita destino vazio). O passo a passo está em
+[PRODUCAO.md, seção 1.1](PRODUCAO.md#11-vindo-de-uma-instalação-em-mongodb).

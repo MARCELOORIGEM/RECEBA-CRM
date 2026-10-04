@@ -11,7 +11,9 @@ com as duas pontas.
 
 ## Como rodar
 
-Pré-requisitos: **Python 3.11+**, **Node 18+**, **MongoDB** acessível.
+Pré-requisitos: **Python 3.11+**, **Node 18+** e um **PostgreSQL 15+** acessível
+— o Supabase ou um local (`docker run -d -e POSTGRES_PASSWORD=dev -p 5432:5432
+postgres:17-alpine` resolve). A conexão vai em `DATABASE_URL`, no `backend/.env`.
 
 ```bash
 # Backend
@@ -28,16 +30,17 @@ yarn install
 yarn start
 ```
 
-Na primeira subida o backend cria os índices, migra dados de versões anteriores,
-cria as contas de `ADMIN_EMAIL`/`MANAGER_EMAIL` e — se `SEED_DEMO_DATA=true` —
-popula dados de exemplo.
+Na primeira subida o backend aplica o schema (tabelas, índices e RLS, tudo
+idempotente), cria as contas de `ADMIN_EMAIL`/`MANAGER_EMAIL` e — se
+`SEED_DEMO_DATA=true` — popula dados de exemplo.
 
 Documentação interativa da API: `http://localhost:8001/docs`.
 
 ### Em produção
 
-A pilha inteira (MongoDB com autenticação, API e painel atrás de Nginx) sobe
-com um comando:
+A pilha inteira (PostgreSQL, API e painel atrás de Nginx) sobe com um comando
+— ou, em plataforma de serviço único com o banco no Supabase, veja
+**[RAILWAY.md](RAILWAY.md)**:
 
 ```bash
 python scripts/gerar_segredos.py https://crm.suaempresa.com.br > .env
@@ -46,7 +49,7 @@ docker compose up -d --build
 ./scripts/instalar_cron.sh          # backup diário + vigia do /api/health
 ```
 
-Sobem quatro serviços: MongoDB com autenticação, a API, o painel em Nginx e um
+Sobem quatro serviços: PostgreSQL, a API, o painel em Nginx e um
 **Caddy terminando HTTPS**, com certificado Let's Encrypt obtido e renovado
 sozinho. O banco não publica porta nenhuma e o HTTP interno fica no loopback.
 
@@ -64,18 +67,20 @@ backend/
   server.py            ponto de entrada (uvicorn server:app)
   app/
     config.py          configuração vinda do .env
-    db.py              conexão Mongo, índices, contador atômico
+    pg.py              pool asyncpg, schema no boot, contador atômico
+    sql/               schema PostgreSQL: tabelas, índices, RLS
+    consulta.py        construtor de WHERE com parâmetros e colunas conferidas
     security.py        senhas (bcrypt), tokens JWT, cookies
     deps.py            get_current_user, require_admin
     models.py          modelos de entrada com validação
-    repo.py            paginação, busca e get_or_404
+    repo.py            leitura, escrita, paginação e get_or_404
     financials.py      efeitos financeiros de uma entrega
     tempo.py           fronteiras de dia e mês no fuso do negócio
     rede.py            IP real do cliente (só confia no proxy quando mandado)
     observabilidade.py logs, id de requisição, Sentry
     audit.py           trilha de auditoria
     form_templates.py  modelos padrão dos formulários (fonte única)
-    seed.py            carga inicial e migração
+    seed.py            contas iniciais, formulário padrão, dados de exemplo
     main.py            app FastAPI, CORS, tratadores de erro
     routers/           auth, restaurants, drivers, contracts, payments,
                        orders, leads, activities, dashboard, users,
@@ -91,14 +96,14 @@ frontend/src/
                        Reports, Integrations, Users
 ```
 
-**Stack:** FastAPI + Motor/MongoDB · React 19 + React Router + TanStack Query +
+**Stack:** FastAPI + asyncpg/PostgreSQL (Supabase) · React 19 + React Router + TanStack Query +
 Tailwind + shadcn/ui + Recharts.
 
 ---
 
 ## Modelo de dados
 
-| Coleção | Papel |
+| Tabela | Papel |
 |---|---|
 | `leads` | funil comercial, com histórico de etapas e motivo de perda |
 | `activities` | tarefas com prazo e interações registradas |
@@ -303,8 +308,9 @@ versão anterior errava, e o motivo está escrito no próprio teste.
 ### No CI
 
 `.github/workflows/ci.yml` roda a cada push e PR, em três frentes: a suíte de
-pytest contra um Mongo de verdade, o build do painel e o build das duas imagens
-Docker. Um PR que quebra o cálculo financeiro, a permissão por perfil ou o
+pytest contra um PostgreSQL de verdade (antes dela, `scripts/conferir_schema.py`
+confere se toda coluna que o código grava ou filtra existe no schema), o build
+do painel e o build das duas imagens Docker. Um PR que quebra o cálculo financeiro, a permissão por perfil ou o
 build não chega a ser mesclado — antes, isso só aparecia se alguém lembrasse de
 rodar os testes.
 

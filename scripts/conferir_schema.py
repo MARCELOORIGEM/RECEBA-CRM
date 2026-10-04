@@ -12,8 +12,15 @@ Este script lê os dois lados e compara:
 
   - o SQL, pelo parser de verdade do PostgreSQL (pglast), tirando as colunas
     declaradas em cada CREATE TABLE;
-  - o código Python, por AST, tirando os campos de cada insert/update e dos
-    modelos Pydantic que viram documento via `model_dump()`.
+  - o código Python, por AST, tirando os campos de cada escrita
+    (`repo.inserir`, `repo.atualizar`, `repo.incrementar`,
+    `repo.atualizar_onde`), as colunas usadas em filtros e buscas
+    (`repo.filtro("t").igual("coluna", ...)`, `um_por`, `existe`, `somar`) e
+    os campos dos modelos Pydantic que viram linha via `model_dump()`.
+
+Os filtros entram porque um nome de coluna errado ali não falha no import nem
+no teste que não passa por aquela rota: só quando alguém clica no filtro, em
+produção, como erro 500.
 
 Achou dois buracos reais na primeira execução: `orders.credited_*` (a
 fotografia que torna o estorno exato) não estava no schema, e `created_at_dt`
@@ -90,8 +97,36 @@ def colunas_do_schema() -> dict[str, set[str]]:
     return tabelas
 
 
+# Métodos de `repo` que gravam: nome -> (posição do dicionário de campos).
+ESCRITAS = {"inserir": 1, "atualizar": 2, "incrementar": 2, "atualizar_onde": 2}
+# Métodos de `repo` que recebem (tabela, coluna, ...).
+LEITURAS_POR_COLUNA = {"um_por", "existe", "somar", "campo_de_ordenacao", "coluna"}
+# Métodos de `Filtro` cujo primeiro argumento é uma coluna.
+CONDICOES = {"igual", "diferente", "em", "fora", "desde", "ate", "antes_de",
+             "verdadeiro", "nulo"}
+
+
+def _texto(no) -> str | None:
+    return no.value if isinstance(no, ast.Constant) and isinstance(no.value, str) else None
+
+
+def _tabela_do_filtro(no) -> str | None:
+    """Desce a cadeia `repo.filtro("t").igual(...).desde(...)` até o início.
+
+    Devolve a tabela de `repo.filtro("t")` ou `Filtro("t")`, ou None quando a
+    cadeia começa numa variável (`f.igual(...)`), resolvida à parte.
+    """
+    while isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute):
+        if no.func.attr == "filtro" and no.args:
+            return _texto(no.args[0])
+        no = no.func.value
+    if isinstance(no, ast.Call) and isinstance(no.func, ast.Name) and no.func.id == "Filtro":
+        return _texto(no.args[0]) if no.args else None
+    return None
+
+
 class ColetorDeCampos(ast.NodeVisitor):
-    """Campos gravados em cada coleção, por insert_one/update_one."""
+    """Colunas usadas em cada tabela: gravadas, filtradas ou buscadas."""
 
     def __init__(self, campos: dict[str, set[str]]) -> None:
         # `campos` é compartilhado entre os arquivos; `vars` NÃO pode ser.
@@ -100,6 +135,9 @@ class ColetorDeCampos(ast.NodeVisitor):
         # usuários, e o resultado acusaria dezenas de colunas inexistentes.
         self.campos = campos
         self.vars: dict[str, set[str]] = {}
+        # `f = repo.filtro("orders")` -> {"f": "orders"}, para resolver as
+        # condições acrescentadas depois em linhas separadas.
+        self.filtros: dict[str, str] = {}
 
     def _chaves(self, node) -> set[str]:
         out: set[str] = set()
@@ -116,15 +154,21 @@ class ColetorDeCampos(ast.NodeVisitor):
     def visit_Assign(self, node):
         if len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             nome = node.targets[0].id
+            tabela = _tabela_do_filtro(node.value)
+            if tabela:
+                self.filtros[nome] = tabela
             chaves = self._chaves(node.value)
             if chaves:
                 self.vars[nome] = self.vars.get(nome, set()) | chaves
         self.generic_visit(node)
 
     def visit_Subscript(self, node):
-        # doc["campo"] = ...
+        # doc["campo"] = ... — só atribuição. Ler `doc["name"]` não grava
+        # nada; contado, acusava `orders.name` porque o `doc` de um cadastro
+        # lido em `_resolve_party` tem o mesmo nome do `doc` do pedido.
         if (
-            isinstance(node.value, ast.Name)
+            isinstance(node.ctx, ast.Store)
+            and isinstance(node.value, ast.Name)
             and isinstance(node.slice, ast.Constant)
             and isinstance(node.slice.value, str)
         ):
@@ -133,26 +177,37 @@ class ColetorDeCampos(ast.NodeVisitor):
 
     def visit_Call(self, node):
         f = node.func
-        if (
-            isinstance(f, ast.Attribute)
-            and isinstance(f.value, ast.Attribute)
-            and isinstance(f.value.value, ast.Name)
-            and f.value.value.id == "db"
-        ):
-            colecao = f.value.attr
-            if f.attr in ("insert_one", "insert_many"):
-                for arg in node.args:
-                    if isinstance(arg, ast.List):
-                        for el in arg.elts:
-                            self.campos[colecao] |= self._chaves(el)
-                    else:
-                        self.campos[colecao] |= self._chaves(arg)
-            elif f.attr in ("update_one", "update_many") and len(node.args) >= 2:
-                alteracao = node.args[1]
-                if isinstance(alteracao, ast.Dict):
-                    for chave, valor in zip(alteracao.keys, alteracao.values):
-                        if isinstance(chave, ast.Constant) and chave.value in ("$set", "$inc"):
-                            self.campos[colecao] |= self._chaves(valor)
+        if isinstance(f, ast.Attribute):
+            tabela = _texto(node.args[0]) if node.args else None
+            dono = f.value
+
+            # repo.inserir("t", {...}), repo.atualizar("t", id, {...}), ...
+            if isinstance(dono, ast.Name) and dono.id == "repo" and tabela:
+                pos = ESCRITAS.get(f.attr)
+                if pos is not None and len(node.args) > pos:
+                    self.campos[tabela] |= self._chaves(node.args[pos])
+                for kw in node.keywords:
+                    if f.attr == "incrementar" and kw.arg == "definir":
+                        self.campos[tabela] |= self._chaves(kw.value)
+                if f.attr in LEITURAS_POR_COLUNA and len(node.args) > 1:
+                    coluna = _texto(node.args[1])
+                    if coluna:
+                        self.campos[tabela].add(coluna)
+                if f.attr in ("listar", "paginar"):
+                    for kw in node.keywords:
+                        if kw.arg == "ordenar_por" and _texto(kw.value):
+                            self.campos[tabela].add(kw.value.value)
+
+            # <filtro>.igual("coluna", ...) e <filtro>.busca(termo, [...])
+            if f.attr in CONDICOES or f.attr == "busca":
+                alvo = _tabela_do_filtro(dono)
+                if alvo is None and isinstance(dono, ast.Name):
+                    alvo = self.filtros.get(dono.id)
+                if alvo:
+                    if f.attr == "busca" and len(node.args) > 1 and isinstance(node.args[1], ast.List):
+                        self.campos[alvo] |= {c for c in map(_texto, node.args[1].elts) if c}
+                    elif f.attr in CONDICOES and node.args and _texto(node.args[0]):
+                        self.campos[alvo].add(node.args[0].value)
         self.generic_visit(node)
 
 
@@ -248,15 +303,15 @@ def main() -> int:
             problemas += 1
             print(f"  FALTA em {tabela}: {', '.join(faltando)}")
 
-    # Tabela que o código nunca escreve é suspeita: ou sobrou do Mongo, ou a
-    # rota que deveria usá-la ainda não foi migrada.
+    # Tabela que o código nunca toca pelo `repo` é suspeita: ou sobrou do
+    # Mongo, ou só é usada por SQL escrito à mão — que este script não lê.
     orfas = sorted(t for t in tabelas if t not in codigo)
     escritas_sem_tabela = sorted(c for c in codigo if c not in tabelas)
 
     print(f"\ntabelas no schema: {len(tabelas)}")
     print(f"tabelas com coluna faltando: {problemas}")
     if orfas:
-        print(f"tabelas que o código não escreve: {', '.join(orfas)}")
+        print(f"tabelas só usadas por SQL à mão (não conferidas): {', '.join(orfas)}")
     if escritas_sem_tabela:
         problemas += 1
         print(f"  ESCRITA SEM TABELA: {', '.join(escritas_sem_tabela)}")

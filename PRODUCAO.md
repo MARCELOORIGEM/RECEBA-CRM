@@ -6,96 +6,126 @@ antes de abrir para a equipe.
 
 ---
 
-## 1. Precisa de banco de dados? Sim — MongoDB
+## 1. Precisa de banco de dados? Sim — PostgreSQL
 
-O CRM guarda **tudo** no MongoDB: restaurantes, entregadores, pedidos,
+O CRM guarda **tudo** num PostgreSQL: restaurantes, entregadores, pedidos,
 contratos, pagamentos, leads, atividades, auditoria, usuários e as respostas do
-formulário público. Não existe modo "sem banco", e não dá para trocar por
-MySQL/Postgres sem reescrever a camada de dados — o código usa Motor (driver
-assíncrono do Mongo) direto.
+formulário público. Não existe modo "sem banco".
 
-Hoje, em desenvolvimento, ele aponta para um Mongo local **sem senha**, no banco
-`test_database`. Isso não vai para produção.
+Até a versão anterior era MongoDB. A troca trouxe três coisas que o Mongo não
+dava: **restrições no próprio banco** (status fora da lista, comissão acima de
+100% ou CPF com pontuação são recusados na gravação, não só na tela),
+**agregações do painel em SQL** (uma consulta por tabela em vez de duas dezenas)
+e **trava real no financeiro** (a entrega marcada ao mesmo tempo pela tela e
+pelo marketplace lança uma vez só). Quem tem uma instalação em Mongo transfere
+os dados com `scripts/mongo_para_postgres.py` — ver a seção 1.1.
 
-### E o Supabase? Não — e não vale a pena trocar
+### Supabase ou Postgres próprio
 
-Supabase é PostgreSQL com uma camada de autenticação, storage e API em cima.
-Este CRM não usa nada disso:
+O CRM fala com o PostgreSQL direto (driver asyncpg). Ele **não** usa a
+autenticação, o storage nem a API REST do Supabase — login, sessão e permissão
+continuam em `app/security.py` e `app/deps.py`. Então qualquer PostgreSQL 15+
+serve, e são dois destinos possíveis:
 
-| O que o Supabase oferece | O que o CRM já tem |
-|---|---|
-| Banco Postgres | MongoDB, acessado direto pelo Motor em todo o código |
-| Auth (login, JWT, reset de senha) | `app/security.py` + `app/routers/auth.py`, com bcrypt, cookie httpOnly, bloqueio por tentativa e link de nova senha |
-| Row Level Security | `app/deps.py` — `get_current_user` e `require_admin` por rota |
-| API REST automática | 86 rotas FastAPI com validação de tipo, faixa e enum |
-| Storage de arquivos | não há upload de arquivo no sistema |
+**a) Junto, no docker compose (VPS).** O `docker-compose.yml` sobe um
+PostgreSQL 17 com volume persistente e **sem porta publicada** — só a API o
+alcança. Você não cria banco nenhum: `infra/postgres-init.sh` cria o papel da
+aplicação no primeiro boot, dono só do banco do CRM. O superusuário fica para
+backup e administração.
 
-Migrar significaria **reescrever a camada de dados inteira** — todo documento,
-toda consulta, toda agregação do dashboard, o contador atômico de `app/db.py`,
-os índices TTL — e jogar fora a autenticação que já está testada, para ganhar
-exatamente nada que o sistema precise. O Mongo deste compose não custa mensalidade,
-não tem limite de linha e roda na mesma VPS.
-
-Supabase faria sentido se o projeto estivesse começando do zero, ou se
-precisasse de algo que ele resolve e o CRM não tem (um app de entregador com
-login próprio, por exemplo). Hoje, não.
+**b) Supabase (gerenciado).** É o caminho do deploy no Railway
+([RAILWAY.md](RAILWAY.md)). Use a URI de *Project Settings → Database →
+Connection string*, na porta **5432** (modo sessão). **Crie o projeto na mesma
+região da API**: com o banco em outro continente, cada consulta paga a viagem
+(medido: ~380 ms do Brasil até `us-west-2`), e uma tela que faz quatro consultas
+leva mais de um segundo e meio. O plano gratuito pausa o projeto sem uso por uma
+semana e tem backup limitado; para a operação real, use o pago.
 
 ### O que provisionar
 
 | Item | Valor |
 |---|---|
-| Motor | MongoDB **6.0 ou 7.0** (testado no 7) |
+| Motor | PostgreSQL **15 ou mais novo** (testado no 17) |
+| Extensão | `pg_trgm` — vem no pacote padrão; a API a cria no boot |
 | Nome do banco | `miliano_crm` (ou outro; vai em `DB_NAME`) |
-| Usuário da aplicação | um, com papel `readWrite` **só nesse banco** |
+| Usuário da aplicação | um, **dono só desse banco** (cria as tabelas no boot) |
 | Disco | **10 GB** cobrem o primeiro ano com folga (ver conta abaixo) |
-| Memória | 2 GB para o Mongo é suficiente no porte de uma operação regional |
+| Memória | 1 GB para o banco é suficiente no porte de uma operação regional |
 | Rede | alcançável **só** pela API — nunca exposto na internet |
 | Backup | diário, com 14 dias de retenção |
 
-**Não precisa** de réplica, sharding, Atlas Search, séries temporais nem
-nenhum recurso pago. É um banco pequeno e de escrita modesta.
+**Não precisa** de réplica, particionamento nem extensão paga. É um banco
+pequeno e de escrita modesta.
 
 ### Quanto de disco, na prática
 
-Um pedido ocupa ~1 KB. Uma operação com 500 entregas por dia gera ~180 mil
-pedidos por ano, ou seja **menos de 200 MB/ano** de pedidos, mais índices e as
-coleções de apoio. Os 10 GB são folga para anos de histórico e para o backup
+Um pedido ocupa menos de 1 KB. Uma operação com 500 entregas por dia gera ~180
+mil pedidos por ano, ou seja **menos de 200 MB/ano** de pedidos, mais índices e
+as tabelas de apoio. Os 10 GB são folga para anos de histórico e para o backup
 local conviver no mesmo disco.
 
-Duas coleções já se limpam sozinhas (índice TTL): `login_attempts` (1 hora) e
-`password_resets` (30 minutos). `refresh_tokens` expira junto com a sessão.
-
-### As três formas de ter esse banco
-
-**a) Junto, no docker compose (mais simples).** O `docker-compose.yml` deste
-repositório já sobe um Mongo 7 com autenticação, volume persistente e **sem
-porta publicada** — só a API o alcança. É o caminho recomendado para uma única
-VPS. Você não precisa criar banco nenhum: `infra/mongo-init.js` cria o banco e o
-usuário da aplicação no primeiro boot.
-
-**b) MongoDB Atlas (gerenciado).** O tier **M10** (~US$ 57/mês) dá backup
-automático e janela de manutenção. O M0 gratuito funciona para testar, mas tem
-512 MB e cai sob carga — não use para a operação real. Com o Atlas:
-- crie um usuário com `readWrite` no banco `miliano_crm`;
-- libere o IP do servidor da API na lista de acesso (não use `0.0.0.0/0`);
-- use a string `mongodb+srv://...` em `MONGO_URL` e remova o serviço `mongo` do
-  compose.
-
-**c) Mongo já existente na sua infra.** Só precisa do usuário com `readWrite` no
-banco novo e da regra de rede liberando a API. Não compartilhe o banco com outro
-sistema: a aplicação cria índices e assume que as coleções são dela.
+Duas tabelas são limpas pela própria API, na rota que as usa (o PostgreSQL não
+tem TTL como o Mongo tinha): `login_attempts` perde o que passou da janela de
+bloqueio a cada tentativa de login, e `password_resets` perde os links vencidos
+a cada redefinição.
 
 ### O que o sistema faz sozinho na primeira subida
 
 Você não roda migração nenhuma à mão. No boot, a API:
 
-1. cria **todos os índices** (inclusive os únicos e os TTL);
-2. roda as migrações de dados de versões anteriores;
-3. cria as contas de `ADMIN_EMAIL` e `MANAGER_EMAIL` com as senhas do `.env`
+1. aplica o schema (`backend/app/sql/*.sql`) — tabelas, índices e RLS. Tudo é
+   `IF NOT EXISTS`: numa base que já existe, não muda nada;
+2. cria as contas de `ADMIN_EMAIL` e `MANAGER_EMAIL` com as senhas do `.env`
    — **só na criação**: depois, cada pessoa troca a sua e o `.env` não
    sobrescreve mais;
+3. alinha o contador de códigos de pedido acima do maior `PED-` existente;
 4. cria o formulário "Cadastro de Entregadores", se ainda não existir;
 5. popula dados de exemplo **apenas** se `SEED_DEMO_DATA=true` (deixe `false`).
+
+### 1.1 Vindo de uma instalação em MongoDB
+
+Os dados não migram sozinhos. A ordem importa: a cópia é para um PostgreSQL
+**vazio**, então ela acontece **antes** da primeira subida da API nova (que
+criaria as contas iniciais e faria o script recusar o destino).
+
+```bash
+# 0. Com a versão ANTIGA ainda no ar: backup do Mongo, por garantia.
+./scripts/backup.sh
+docker compose down                    # para tudo; os volumes ficam
+
+# 1. Código novo e .env novo. Copie do .env antigo o JWT_SECRET (é o que
+#    mantém as sessões abertas) e os e-mails das contas.
+git pull
+python scripts/gerar_segredos.py https://crm.suaempresa.com.br > .env.novo
+#    ...edite .env.novo e troque pelo .env
+
+# 2. Sobe só os dois bancos, com porta apenas no loopback.
+docker compose -f docker-compose.yml -f infra/transferencia.yml up -d db mongo-antigo
+
+# 3. Copia. Primeiro simulando (roda tudo e desfaz no fim), depois de verdade.
+pip install pymongo asyncpg
+set -a; . ./.env; set +a
+export MONGO_URL=mongodb://127.0.0.1:27017
+export DATABASE_URL="postgresql://${PG_APP_USER}:${PG_APP_PASSWORD}@127.0.0.1:5432/${DB_NAME}"
+python scripts/mongo_para_postgres.py --simular
+python scripts/mongo_para_postgres.py
+
+# 4. Desliga o Mongo antigo e sobe a pilha normal (sem a porta do banco).
+docker compose -f docker-compose.yml -f infra/transferencia.yml rm -sf mongo-antigo
+docker compose up -d --build
+```
+
+A simulação mostra, por tabela, quantos registros entram e quais campos antigos
+ficaram sem coluna. O que o banco recusar (uma resposta de formulário cujo
+formulário foi apagado, um pagamento com valor negativo) não derruba a cópia —
+vai para `backups/transferencia_recusados.json`, com o motivo. A cópia é uma
+transação só: se algo inesperado falhar, o PostgreSQL fica vazio como estava, e
+dá para corrigir e rodar de novo.
+
+Os usuários mantêm o identificador e o `JWT_SECRET` é o mesmo, então quem estava
+logado continua logado. O volume `mongo_dados` continua na máquina depois da
+cópia; apague-o (`docker volume rm <projeto>_mongo_dados`) só quando a operação
+já estiver rodando alguns dias no banco novo.
 
 ---
 
@@ -108,15 +138,15 @@ python scripts/gerar_segredos.py https://crm.suaempresa.com.br > .env
 ```
 
 Depois abra e ajuste os e-mails das contas iniciais. **Guarde uma cópia num
-cofre de senhas** — `JWT_SECRET` e as senhas do Mongo não dá para recuperar, e
+cofre de senhas** — `JWT_SECRET` e as senhas do banco não dá para recuperar, e
 trocar o `JWT_SECRET` desconecta todo mundo.
 
 O `.env.example` descreve cada variável. As que mais importam:
 
 | Variável | Para que serve |
 |---|---|
-| `MONGO_URL` | conexão com o banco (no compose é montada a partir do usuário/senha) |
-| `DB_NAME` | nome do banco |
+| `DATABASE_URL` | conexão com o banco. No compose é montada a partir de `PG_APP_USER`/`PG_APP_PASSWORD`; no Railway é a URI do Supabase |
+| `DB_NAME` | nome do banco (só no compose) |
 | `JWT_SECRET` | assina as sessões; trocar derruba todas |
 | `FRONTEND_URL` | domínio do painel. Define o CORS **e** o modo do cookie: `https` liga `Secure`+`SameSite=None`, `http` usa `Lax` |
 | `PUBLIC_API_URL` | endereço da API que vai **dentro do bundle** do navegador — muda só recompilando |
@@ -148,7 +178,7 @@ docker compose logs -f proxy      # acompanhe a emissão do certificado
 
 Sobem quatro serviços:
 
-- **mongo** — banco com autenticação, volume `mongo_dados`, sem porta publicada;
+- **db** — PostgreSQL 17, volume `pg_dados`, sem porta publicada;
 - **api** — FastAPI em usuário não-root, com healthcheck em `/api/health`;
 - **web** — bundle do painel servido por Nginx, com cabeçalhos de segurança e
   `/api/` fazendo proxy para a API;
@@ -164,14 +194,14 @@ em claro.
 para `127.0.0.1:8080`:
 
 ```bash
-docker compose up -d --build mongo api web
+docker compose up -d --build db api web
 ```
 
 Se esse proxy estiver em **outra máquina**, troque `BIND_HTTP` para `0.0.0.0` e
 proteja a porta no firewall.
 
 Todo serviço tem **teto de memória** (`MEM_*` no `.env`) e **rotação de log**
-(10 MB × 5 arquivos). Sem o teto, um pico do Mongo leva a máquina junto; sem a
+(10 MB × 5 arquivos). Sem o teto, um pico do banco leva a máquina junto; sem a
 rotação, o log do Docker enche o disco e derruba o banco.
 
 ### Primeiro acesso
@@ -194,8 +224,8 @@ sistema guarda apenas o hash do token, e gerar um link novo invalida o anterior.
 ## 4. Backup
 
 ```bash
-./scripts/backup.sh          # dump compactado em ./backups
-./scripts/restaurar.sh ARQUIVO.gz
+./scripts/backup.sh          # pg_dump compactado em ./backups
+./scripts/restaurar.sh backups/miliano_AAAA-MM-DD_HHMM.dump
 ```
 
 Agende no cron do servidor com um comando — instala backup diário (3h) e o
@@ -298,7 +328,7 @@ Toda chamada entra em **Integrações → Logs**.
 ## 8. Conferir antes de abrir para a equipe
 
 - [ ] `JWT_SECRET` gerado por `scripts/gerar_segredos.py`, não o de exemplo
-- [ ] Senhas do Mongo trocadas e guardadas num cofre
+- [ ] Senhas do banco geradas pelo script e guardadas num cofre
 - [ ] `ADMIN_EMAIL` e `MANAGER_EMAIL` são e-mails reais da empresa
 - [ ] Senha do administrador trocada **pela tela** depois do primeiro acesso
 - [ ] `SEED_DEMO_DATA=false` e nenhum dado de exemplo na base
@@ -308,7 +338,7 @@ Toda chamada entra em **Integrações → Logs**.
 - [ ] `docker compose logs proxy` mostra o certificado emitido, e o painel abre
       em `https://` com cadeado
 - [ ] `FRONTEND_URL` e `PUBLIC_API_URL` com o domínio real e `https://`
-- [ ] Porta 27017 **não** publicada em lugar nenhum
+- [ ] Porta 5432 **não** publicada em lugar nenhum
 - [ ] `BIND_HTTP=127.0.0.1` (a porta 8080 não responde de fora: confira de
       outra máquina com `curl http://SEU_IP:8080`)
 - [ ] `./scripts/instalar_cron.sh` rodado, e `crontab -l` mostra as duas linhas

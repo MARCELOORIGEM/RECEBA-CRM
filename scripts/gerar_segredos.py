@@ -17,7 +17,11 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
-ALFABETO = string.ascii_letters + string.digits + "!@#%^&*-_=+"
+# Sem pontuação além de - e _: as senhas do banco entram na URI de conexão
+# (postgresql://usuario:senha@db/...), onde @, #, % e / mudam o sentido do
+# endereço e a API não conectaria. 28 caracteres deste alfabeto ainda dão
+# mais de 160 bits.
+ALFABETO = string.ascii_letters + string.digits + "-_"
 
 
 def senha(tamanho: int = 28) -> str:
@@ -35,10 +39,10 @@ def main() -> None:
     print()
     print("# --- Banco ---")
     print("DB_NAME=miliano_crm")
-    print("MONGO_ROOT_USER=miliano_root")
-    print(f"MONGO_ROOT_PASSWORD={senha()}")
-    print("MONGO_APP_USER=miliano_app")
-    print(f"MONGO_APP_PASSWORD={senha()}")
+    print("PG_ROOT_USER=miliano_root")
+    print(f"PG_ROOT_PASSWORD={senha()}")
+    print("PG_APP_USER=miliano_app")
+    print(f"PG_APP_PASSWORD={senha()}")
     print()
     print("# --- Sessão ---")
     print("# Trocar este valor desconecta todo mundo que estiver logado.")
@@ -84,7 +88,7 @@ def main() -> None:
     print("WEBHOOK_ALERTA=")
     print()
     print("# --- Limites de memória ---")
-    print("MEM_MONGO=2g")
+    print("MEM_DB=1g")
     print("MEM_API=1g")
     print("MEM_WEB=256m")
     print("MEM_PROXY=256m")

@@ -11,8 +11,17 @@ const NOME_TESTE = `Entregador Outro ${marca06}`;
 const limpar = () =>
   execFileSync("C:/Users/DELL/receba-crm/.venv/Scripts/python.exe", [
     "-c",
-    "from pymongo import MongoClient;d=MongoClient('mongodb://localhost:27017')['test_database'];"
-    + "d.form_submissions.delete_many({'ip':'127.0.0.1'});d.login_attempts.delete_many({})",
+    // Lê a DATABASE_URL do backend/.env, o mesmo banco para onde a API local
+    // aponta. Zera os limites por IP e por login, que este roteiro esbarraria
+    // rodado várias vezes seguidas.
+    "import asyncio,os,asyncpg\nfrom dotenv import load_dotenv\n"
+    + "load_dotenv('C:/Users/DELL/receba-crm/backend/.env')\n"
+    + "async def m():\n"
+    + " c=await asyncpg.connect(os.environ['DATABASE_URL'],statement_cache_size=0)\n"
+    + " await c.execute(\"DELETE FROM form_submissions WHERE ip='127.0.0.1'\")\n"
+    + " await c.execute('DELETE FROM login_attempts')\n"
+    + " await c.close()\n"
+    + "asyncio.run(m())",
   ]);
 
 (async () => {

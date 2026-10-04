@@ -2,17 +2,17 @@
 #
 #   docker compose up -d --build
 #
-# Sobe quatro serviços: MongoDB com autenticação, a API, o painel servido por
-# Nginx e o Caddy terminando TLS na frente de tudo. Todos os segredos vêm do
+# Sobe quatro serviços: PostgreSQL, a API, o painel servido por Nginx e o
+# Caddy terminando TLS na frente de tudo. Todos os segredos vêm do
 # arquivo .env na raiz (veja .env.example) — nenhum valor sensível fica aqui.
 #
 # Quem já tem um proxy com TLS na infra sobe sem o Caddy:
-#   docker compose up -d --build mongo api web
+#   docker compose up -d --build db api web
 # e aponta esse proxy para 127.0.0.1:${PORTA_HTTP}.
 
 # Rotação de log, aplicada a todo serviço. Sem isto o driver json-file do
 # Docker cresce sem teto até encher o disco da VPS — e disco cheio derruba o
-# Mongo, que é onde está o sistema inteiro.
+# banco, que é onde está o sistema inteiro.
 x-log: &log
   logging:
     driver: json-file
@@ -21,32 +21,31 @@ x-log: &log
       max-file: "5"
 
 services:
-  mongo:
-    image: mongo:7
+  db:
+    image: postgres:17-alpine
     restart: unless-stopped
     <<: *log
     environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
-      MONGO_INITDB_DATABASE: ${DB_NAME}
-      # Lidos pelo script de inicialização para criar o usuário da aplicação.
-      APP_USER: ${MONGO_APP_USER}
-      APP_PASSWORD: ${MONGO_APP_PASSWORD}
+      # Superusuário: administra o servidor. A API NÃO usa esta conta.
+      POSTGRES_USER: ${PG_ROOT_USER}
+      POSTGRES_PASSWORD: ${PG_ROOT_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      # Lidos pelo script de inicialização para criar o papel da aplicação.
+      APP_USER: ${PG_APP_USER}
+      APP_PASSWORD: ${PG_APP_PASSWORD}
     volumes:
-      - mongo_dados:/data/db
-      - ./infra/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js:ro
+      - pg_dados:/var/lib/postgresql/data
+      - ./infra/postgres-init.sh:/docker-entrypoint-initdb.d/postgres-init.sh:ro
       - ./backups:/backups
     # SEM `ports`: o banco só é alcançável pela rede interna do compose.
-    # Publicar 27017 no host é o caminho mais curto para alguém de fora ler
+    # Publicar 5432 no host é o caminho mais curto para alguém de fora ler
     # CPF e conta bancária.
-    # O Mongo toma a memória que encontrar. Sem teto, num pico ele leva a
-    # máquina inteira junto e o kernel escolhe quem morre.
     deploy:
       resources:
         limits:
-          memory: ${MEM_MONGO:-2g}
+          memory: ${MEM_DB:-1g}
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_ROOT_USER} -d ${DB_NAME}"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -58,11 +57,11 @@ services:
     restart: unless-stopped
     <<: *log
     depends_on:
-      mongo:
+      db:
         condition: service_healthy
     environment:
-      MONGO_URL: mongodb://${MONGO_APP_USER}:${MONGO_APP_PASSWORD}@mongo:27017/${DB_NAME}?authSource=${DB_NAME}
-      DB_NAME: ${DB_NAME}
+      # Porta 5432 direta, sem pgbouncer: o pool fica na própria API.
+      DATABASE_URL: postgresql://${PG_APP_USER}:${PG_APP_PASSWORD}@db:5432/${DB_NAME}
       JWT_SECRET: ${JWT_SECRET}
       FRONTEND_URL: ${FRONTEND_URL}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
@@ -140,6 +139,6 @@ services:
           memory: ${MEM_PROXY:-256m}
 
 volumes:
-  mongo_dados:
+  pg_dados:
   caddy_dados:
   caddy_config:

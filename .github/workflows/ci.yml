@@ -1,6 +1,6 @@
 # Roda a suíte a cada push e PR.
 #
-# Os 179 testes de pytest e os roteiros de navegador existiam, mas só rodavam
+# Os testes de pytest e os roteiros de navegador existiam, mas só rodavam
 # quando alguém lembrava. Aqui eles passam a rodar sozinhos, e um PR que quebra
 # o financeiro ou a permissão por perfil não chega a ser mesclado.
 name: CI
@@ -16,19 +16,25 @@ jobs:
     runs-on: ubuntu-latest
 
     services:
-      mongo:
-        image: mongo:7
+      # Mesma versão da pilha do compose. O Supabase roda 17 também.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: miliano
+          POSTGRES_PASSWORD: miliano-ci
+          POSTGRES_DB: miliano_ci
         ports:
-          - 27017:27017
+          - 5432:5432
         options: >-
-          --health-cmd "mongosh --quiet --eval 'db.adminCommand(\"ping\").ok'"
+          --health-cmd "pg_isready -U miliano -d miliano_ci"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
 
     env:
-      MONGO_URL: mongodb://localhost:27017
-      DB_NAME: miliano_ci
+      # Com DATABASE_URL definida, os testes de `test_repo_pg.py` deixam de
+      # ser pulados e rodam contra este banco.
+      DATABASE_URL: postgresql://miliano:miliano-ci@localhost:5432/miliano_ci
       JWT_SECRET: ci-apenas-para-teste-nao-usar-em-producao
       FRONTEND_URL: http://localhost:3000
       AMBIENTE: ci
@@ -53,6 +59,11 @@ jobs:
         working-directory: backend
         run: pip install -r requirements-dev.txt
 
+      - name: Conferir o schema contra o código
+        # Coluna gravada ou filtrada que o schema não tem vira 500 em produção,
+        # na rota que ninguém testou. Aqui ela quebra o PR.
+        run: python scripts/conferir_schema.py
+
       - name: Subir a API
         working-directory: backend
         run: |
@@ -61,7 +72,7 @@ jobs:
 
       - name: Esperar a API ficar de pé
         run: |
-          # O primeiro boot cria índices e roda as migrações: dar o start por
+          # O primeiro boot aplica o schema e cria as contas: dar o start por
           # imediato faria o primeiro teste falhar por corrida, não por bug.
           for i in $(seq 1 45); do
             if curl -fsS http://127.0.0.1:8001/api/health | grep -q '"database":"up"'; then

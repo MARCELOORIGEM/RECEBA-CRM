@@ -17,26 +17,26 @@ cd "$(dirname "$0")/.."
 
 RETENCAO_DIAS="${RETENCAO_DIAS:-14}"
 CARIMBO="$(date +%Y-%m-%d_%H%M)"
-ARQUIVO="miliano_${CARIMBO}.archive.gz"
+ARQUIVO="miliano_${CARIMBO}.dump"
 
 echo "[$(date '+%F %T')] iniciando backup de ${DB_NAME}"
 
-# --archive + --gzip gera um arquivo só, que o mongorestore lê direto.
-docker compose exec -T mongo mongodump \
-  --username "${MONGO_ROOT_USER}" \
-  --password "${MONGO_ROOT_PASSWORD}" \
-  --authenticationDatabase admin \
-  --db "${DB_NAME}" \
-  --archive="/backups/${ARQUIVO}" \
-  --gzip \
-  --quiet
+# Formato custom (-Fc): já sai comprimido, e o pg_restore consegue restaurar
+# tabela a tabela ou listar o conteúdo sem restaurar nada. `--no-owner` deixa
+# o arquivo restaurável num servidor onde o papel da aplicação tem outro nome.
+docker compose exec -T db pg_dump \
+  --username "${PG_ROOT_USER}" \
+  --dbname "${DB_NAME}" \
+  --format=custom \
+  --no-owner \
+  --file="/backups/${ARQUIVO}"
 
 TAMANHO="$(du -h "backups/${ARQUIVO}" | cut -f1)"
 echo "[$(date '+%F %T')] backup concluído: backups/${ARQUIVO} (${TAMANHO})"
 
 # Um backup que nunca foi restaurado não é um backup. Confere se o arquivo é
 # legível antes de dar o serviço por feito.
-if ! gzip -t "backups/${ARQUIVO}" 2>/dev/null; then
+if ! docker compose exec -T db pg_restore --list "/backups/${ARQUIVO}" >/dev/null 2>&1; then
   echo "[$(date '+%F %T')] ERRO: o arquivo gerado está corrompido" >&2
   exit 1
 fi
@@ -60,6 +60,6 @@ else
   echo "[$(date '+%F %T')] AVISO: DESTINO_REMOTO vazio — só existe cópia local, no mesmo disco do banco" >&2
 fi
 
-APAGADOS="$(find backups -name 'miliano_*.archive.gz' -mtime "+${RETENCAO_DIAS}" -print -delete | wc -l)"
+APAGADOS="$(find backups -name 'miliano_*.dump' -mtime "+${RETENCAO_DIAS}" -print -delete | wc -l)"
 [ "${APAGADOS}" -gt 0 ] && echo "[$(date '+%F %T')] ${APAGADOS} backup(s) antigo(s) removido(s)"
 exit 0
