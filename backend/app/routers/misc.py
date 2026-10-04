@@ -1,26 +1,34 @@
 """Busca global, timeline por cadastro, auditoria e saúde da API."""
 import asyncio
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import pg, repo
 from ..deps import get_current_user, require_admin
+from ..permissoes import pode
 
 router = APIRouter(tags=["geral"])
 
-# (tabela, colunas pesquisadas, tipo, campo do título, campos do subtítulo, rota)
+# (tabela, colunas pesquisadas, tipo, campo do título, campos do subtítulo,
+#  rota, módulo exigido)
 ALVOS_DA_BUSCA = [
     ("restaurants", ["name", "cnpj", "contact_person", "phone"],
-     "Restaurante", "name", ["category", "status"], "/restaurantes"),
+     "Restaurante", "name", ["category", "status"], "/restaurantes", "restaurantes"),
     ("drivers", ["name", "plate", "phone"],
-     "Entregador", "name", ["vehicle_type", "status"], "/entregadores"),
+     "Entregador", "name", ["vehicle_type", "status"], "/entregadores", "entregadores"),
     ("orders", ["code", "customer_name", "restaurant_name"],
-     "Pedido", "code", ["restaurant_name", "customer_name"], "/pedidos"),
+     "Pedido", "code", ["restaurant_name", "customer_name"], "/pedidos", "pedidos"),
     ("leads", ["name", "contact_name", "city"],
-     "Lead", "name", ["city", "stage"], "/funil"),
+     "Lead", "name", ["city", "stage"], "/funil", "funil"),
     ("payments", ["creditor"],
-     "Pagamento", "creditor", ["status", "due_date"], "/contratos-pagamentos"),
+     "Pagamento", "creditor", ["status", "due_date"], "/contratos-pagamentos", "financeiro"),
 ]
+
+# Tipo de cadastro da linha do tempo -> módulo que dá acesso a ele.
+MODULO_DA_ENTIDADE = {
+    "lead": "funil", "restaurante": "restaurantes", "entregador": "entregadores",
+    "pedido": "pedidos",
+}
 
 
 @router.get("/health")
@@ -40,15 +48,20 @@ async def global_search(q: str = Query("", min_length=0), user: dict = Depends(g
     if len(term) < 2:
         return {"results": []}
 
-    # As cinco tabelas em paralelo: em sequência, a 200 ms cada, o atalho de
-    # busca levaria um segundo para responder a cada tecla.
+    # Só onde o usuário tem acesso: a busca não pode virar a porta dos fundos
+    # para o cadastro que o administrador escondeu dele. E abre direto na
+    # tela, então só vale o que ele abre de verdade (módulo próprio, não a
+    # leitura de apoio).
+    alvos = [a for a in ALVOS_DA_BUSCA if pode(user, a[6], escrita=True)]
+    # As tabelas em paralelo: em sequência, a 200 ms cada, o atalho de busca
+    # levaria um segundo para responder a cada tecla.
     achados = await asyncio.gather(*(
         repo.listar(tabela, repo.filtro(tabela).busca(term, campos), limite=5)
-        for tabela, campos, *_ in ALVOS_DA_BUSCA
+        for tabela, campos, *_ in alvos
     ))
 
     results: list[dict] = []
-    for (_, _, tipo, titulo, sub, rota), docs in zip(ALVOS_DA_BUSCA, achados):
+    for (_, _, tipo, titulo, sub, rota, _), docs in zip(alvos, achados):
         for d in docs:
             results.append({
                 "tipo": tipo,
@@ -63,6 +76,9 @@ async def global_search(q: str = Query("", min_length=0), user: dict = Depends(g
 @router.get("/timeline/{entity_type}/{entity_id}")
 async def timeline(entity_type: str, entity_id: str, user: dict = Depends(get_current_user)):
     """Linha do tempo de um cadastro: interações, tarefas e alterações."""
+    modulo = MODULO_DA_ENTIDADE.get(entity_type)
+    if not modulo or not pode(user, modulo):
+        raise HTTPException(status_code=403, detail="Sem acesso a este cadastro.")
     atividades, logs = await asyncio.gather(
         repo.listar(
             "activities",

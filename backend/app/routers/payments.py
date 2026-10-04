@@ -4,11 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import audit, pg, repo, tempo
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..models import PaymentInput
 from ..repo import get_or_404
 from ..security import now_utc
 
-router = APIRouter(prefix="/payments", tags=["pagamentos"])
+router = APIRouter(
+    prefix="/payments", tags=["pagamentos"],
+    dependencies=[Depends(acesso("financeiro"))],
+)
 
 COLLECTION = {"restaurante": "restaurants", "entregador": "drivers"}
 

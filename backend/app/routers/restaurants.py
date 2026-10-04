@@ -4,11 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import audit, pg, repo, tempo
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..models import RestaurantInput
 from ..repo import get_or_404
 from ..security import now_utc
 
-router = APIRouter(prefix="/restaurants", tags=["restaurantes"])
+router = APIRouter(
+    prefix="/restaurants", tags=["restaurantes"],
+    dependencies=[Depends(acesso("restaurantes"))],
+)
 
 
 async def _orders_this_month(ids: list[str]) -> dict[str, int]:

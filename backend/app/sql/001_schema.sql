@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS users (
     password_hash TEXT NOT NULL,
     role          TEXT NOT NULL DEFAULT 'manager' CHECK (role IN ('admin', 'manager')),
     active        BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Telas que o usuário enxerga (lista de chaves de app/permissoes.py).
+    -- NULL = todas: é o estado das contas criadas antes de existir a escolha,
+    -- que não podem perder acesso numa atualização. Ignorado para admin.
+    permissoes    JSONB,
+    -- Sessões emitidas antes deste instante deixam de valer. Trocar a senha
+    -- (ou mudar o acesso) derruba quem estava logado com a credencial antiga.
+    sessoes_desde TIMESTAMPTZ,
     last_login_at TIMESTAMPTZ,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()

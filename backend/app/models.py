@@ -49,11 +49,22 @@ class ProfileUpdate(BaseModel):
     name: Str1
 
 
+# Telas que um gestor pode receber. Espelha `permissoes.MODULOS`; um valor
+# fora da lista é recusado aqui, em vez de gravado e ignorado em silêncio.
+Modulo = Literal[
+    "dashboard", "pedidos", "funil", "atividades", "restaurantes", "entregadores",
+    "formularios", "financeiro", "relatorios", "integracoes",
+]
+
+
 class UserCreate(BaseModel):
     name: Str1
     email: EmailStr
     password: Annotated[str, Field(min_length=8, max_length=200)]
     role: Role = "manager"
+    # None = todas as telas. Lista vazia é válida: a conta entra e não vê nada
+    # até o administrador liberar.
+    permissoes: Optional[list[Modulo]] = None
 
 
 class UserUpdate(BaseModel):
@@ -61,6 +72,10 @@ class UserUpdate(BaseModel):
     role: Optional[Role] = None
     password: Optional[Annotated[str, Field(min_length=8, max_length=200)]] = None
     active: Optional[bool] = None
+    permissoes: Optional[list[Modulo]] = None
+    # Distingue "não mexer nas permissões" (campo ausente) de "liberar tudo"
+    # (todas=True), já que None nos dois casos seria ambíguo.
+    todas_as_telas: bool = False
 
 
 class RestaurantInput(BaseModel):

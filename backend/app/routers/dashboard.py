@@ -22,9 +22,10 @@ from fastapi import APIRouter, Depends
 from .. import pg, tempo
 from ..config import settings
 from ..deps import get_current_user
+from ..permissoes import acesso
 from ..security import now_utc
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(acesso("dashboard"))])
 
 ABERTOS = ("novo", "contatado", "negociacao", "proposta")
 

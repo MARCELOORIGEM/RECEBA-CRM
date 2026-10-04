@@ -4,11 +4,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import audit, repo
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..models import DriverInput, DriverStatusPatch
 from ..repo import get_or_404
 from ..security import now_utc
 
-router = APIRouter(prefix="/drivers", tags=["entregadores"])
+router = APIRouter(
+    prefix="/drivers", tags=["entregadores"],
+    dependencies=[Depends(acesso("entregadores"))],
+)
 
 
 @router.get("")

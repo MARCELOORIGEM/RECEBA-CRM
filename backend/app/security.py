@@ -33,6 +33,9 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
         "email": email,
         "role": role,
         "type": "access",
+        # Quando foi emitido: é contra isto que o corte de sessões do usuário
+        # (`users.sessoes_desde`) é comparado.
+        "iat": now_utc(),
         "exp": now_utc() + timedelta(minutes=settings.access_ttl_minutes),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
@@ -42,6 +45,7 @@ def create_refresh_token(user_id: str) -> str:
     payload = {
         "sub": user_id,
         "type": "refresh",
+        "iat": now_utc(),
         "exp": now_utc() + timedelta(days=settings.refresh_ttl_days),
     }
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)

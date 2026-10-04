@@ -15,12 +15,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from .. import audit, pg, repo
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..form_templates import MODELOS
 from ..models import FormInput, FormPatch
 from ..repo import get_or_404
 from ..security import now_utc
 
-router = APIRouter(prefix="/forms", tags=["formulários"])
+router = APIRouter(prefix="/forms", tags=["formulários"], dependencies=[Depends(acesso("formularios"))])
 
 # Campos que o formulário consegue gravar direto no cadastro de destino.
 # Qualquer outra chave vira informação extra, guardada no registro e na

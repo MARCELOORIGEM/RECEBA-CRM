@@ -10,15 +10,15 @@ import {
 import { api } from "@/lib/api";
 
 const ATALHOS = [
-  { rota: "/", label: "Dashboard", icon: LayoutDashboard },
-  { rota: "/funil", label: "Funil de Vendas", icon: Filter },
-  { rota: "/atividades", label: "Atividades", icon: FileText },
-  { rota: "/restaurantes", label: "Restaurantes", icon: Store },
-  { rota: "/entregadores", label: "Entregadores", icon: Bike },
-  { rota: "/pedidos", label: "Pedidos", icon: Package },
-  { rota: "/contratos-pagamentos", label: "Contratos & Pagamentos", icon: FileText },
-  { rota: "/relatorios", label: "Relatórios", icon: BarChart3 },
-  { rota: "/integracoes", label: "Integrações API", icon: Plug },
+  { rota: "/", modulo: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { rota: "/funil", modulo: "funil", label: "Funil de Vendas", icon: Filter },
+  { rota: "/atividades", modulo: "atividades", label: "Atividades", icon: FileText },
+  { rota: "/restaurantes", modulo: "restaurantes", label: "Restaurantes", icon: Store },
+  { rota: "/entregadores", modulo: "entregadores", label: "Entregadores", icon: Bike },
+  { rota: "/pedidos", modulo: "pedidos", label: "Pedidos", icon: Package },
+  { rota: "/contratos-pagamentos", modulo: "financeiro", label: "Contratos & Pagamentos", icon: FileText },
+  { rota: "/relatorios", modulo: "relatorios", label: "Relatórios", icon: BarChart3 },
+  { rota: "/integracoes", modulo: "integracoes", label: "Integrações API", icon: Plug },
   { rota: "/usuarios", label: "Usuários", icon: Users2, adminOnly: true },
 ];
 
@@ -26,7 +26,7 @@ const ATALHOS = [
  * Busca global por Ctrl/⌘+K. Antes, achar um pedido específico exigia abrir a
  * página certa e filtrar na mão — não havia busca que cruzasse os cadastros.
  */
-export function CommandPalette({ isAdmin }) {
+export function CommandPalette({ isAdmin, pode = () => true }) {
   const [aberto, setAberto] = useState(false);
   const [termo, setTermo] = useState("");
   const [resultados, setResultados] = useState([]);
@@ -104,7 +104,7 @@ export function CommandPalette({ isAdmin }) {
         )}
 
         <CommandGroup heading="Ir para">
-          {ATALHOS.filter((a) => !a.adminOnly || isAdmin).map((a) => {
+          {ATALHOS.filter((a) => (a.adminOnly ? isAdmin : pode(a.modulo))).map((a) => {
             const Icon = a.icon;
             return (
               <CommandItem key={a.rota} value={a.label} onSelect={() => ir(a.rota)}>

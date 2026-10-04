@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import audit, financials, pg, repo, tempo
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..models import OrderAssign, OrderInput, OrderStatusPatch
 from ..repo import get_or_404
 from ..security import now_utc
 
-router = APIRouter(prefix="/orders", tags=["pedidos"])
+router = APIRouter(prefix="/orders", tags=["pedidos"], dependencies=[Depends(acesso("pedidos"))])
 
 # Fluxo do pedido. Pular etapas escondia erros de operação — agora a API recusa.
 FLOW = {

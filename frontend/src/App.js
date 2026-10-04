@@ -1,7 +1,7 @@
 import "@/App.css";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "sonner";
-import { Loader2 } from "lucide-react";
+import { Loader2, Lock } from "lucide-react";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { ConfirmProvider } from "@/components/ConfirmDialog";
 import ErrorBoundary from "@/components/ErrorBoundary";
@@ -21,6 +21,7 @@ import Forms from "@/pages/Forms";
 import PublicForm from "@/pages/PublicForm";
 import ResetPassword from "@/pages/ResetPassword";
 import NotFound from "@/pages/NotFound";
+import { primeiraRota } from "@/lib/permissoes";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
@@ -33,6 +34,31 @@ function Protected({ children }) {
   }
   if (!user) return <Navigate to="/login" replace />;
   return children;
+}
+
+/**
+ * Tela liberada só para quem tem o módulo. Sem ele, manda para a primeira tela
+ * que o usuário pode abrir — e não para "/", que pode ser justamente uma tela
+ * proibida (o Dashboard mostra receita, e nem todo gestor deve vê-la).
+ */
+function Exige({ modulo, children }) {
+  const { pode } = useAuth();
+  if (pode(modulo)) return children;
+  const destino = primeiraRota(pode);
+  if (destino) return <Navigate to={destino} replace />;
+  return <SemAcesso />;
+}
+
+function SemAcesso() {
+  return (
+    <div className="mx-auto mt-16 max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-8 text-center">
+      <Lock className="mx-auto h-8 w-8 text-slate-500" aria-hidden="true" />
+      <h2 className="mt-4 font-heading text-lg font-bold text-slate-100">Nenhuma tela liberada</h2>
+      <p className="mt-2 text-sm text-slate-400">
+        Sua conta existe, mas o administrador ainda não liberou nenhuma tela para você.
+      </p>
+    </div>
+  );
 }
 
 function AdminOnly({ children }) {
@@ -58,16 +84,16 @@ function AppRoutes() {
           </Protected>
         }
       >
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/funil" element={<Pipeline />} />
-        <Route path="/atividades" element={<Activities />} />
-        <Route path="/restaurantes" element={<Restaurants />} />
-        <Route path="/entregadores" element={<Drivers />} />
-        <Route path="/formularios" element={<Forms />} />
-        <Route path="/contratos-pagamentos" element={<Contracts />} />
-        <Route path="/pedidos" element={<Orders />} />
-        <Route path="/relatorios" element={<Reports />} />
-        <Route path="/integracoes" element={<Integrations />} />
+        <Route path="/" element={<Exige modulo="dashboard"><Dashboard /></Exige>} />
+        <Route path="/funil" element={<Exige modulo="funil"><Pipeline /></Exige>} />
+        <Route path="/atividades" element={<Exige modulo="atividades"><Activities /></Exige>} />
+        <Route path="/restaurantes" element={<Exige modulo="restaurantes"><Restaurants /></Exige>} />
+        <Route path="/entregadores" element={<Exige modulo="entregadores"><Drivers /></Exige>} />
+        <Route path="/formularios" element={<Exige modulo="formularios"><Forms /></Exige>} />
+        <Route path="/contratos-pagamentos" element={<Exige modulo="financeiro"><Contracts /></Exige>} />
+        <Route path="/pedidos" element={<Exige modulo="pedidos"><Orders /></Exige>} />
+        <Route path="/relatorios" element={<Exige modulo="relatorios"><Reports /></Exige>} />
+        <Route path="/integracoes" element={<Exige modulo="integracoes"><Integrations /></Exige>} />
         <Route
           path="/usuarios"
           element={

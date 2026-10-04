@@ -10,11 +10,15 @@ from fastapi import APIRouter, Depends
 from .. import audit, pg, repo, tempo
 from ..consulta import Filtro
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..models import ActivityInput
 from ..repo import get_or_404
 from ..security import now_utc
 
-router = APIRouter(prefix="/activities", tags=["atividades"])
+router = APIRouter(
+    prefix="/activities", tags=["atividades"],
+    dependencies=[Depends(acesso("atividades", tambem=("funil", "restaurantes", "entregadores")))],
+)
 
 
 def _recorte(f: Filtro, scope: str) -> Filtro:

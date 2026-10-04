@@ -13,10 +13,14 @@ from fastapi import APIRouter, Depends
 
 from .. import audit, repo
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..models import ApiKeyInput, WebhookInput
 from ..repo import get_or_404
 
-router = APIRouter(prefix="/integrations", tags=["integrações"])
+router = APIRouter(
+    prefix="/integrations", tags=["integrações"],
+    dependencies=[Depends(acesso("integracoes"))],
+)
 
 
 def _sem_hash(chave: dict) -> dict:

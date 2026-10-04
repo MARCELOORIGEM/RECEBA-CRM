@@ -55,10 +55,14 @@ export const AuthProvider = ({ children }) => {
     setUser(false);
   }, []);
 
-  const value = useMemo(
-    () => ({ user, setUser, loading, login, logout, isAdmin: user?.role === "admin" }),
-    [user, loading, login, logout],
-  );
+  const value = useMemo(() => {
+    const isAdmin = user?.role === "admin";
+    // `modulos` vem resolvido da API (admin = todos). O fallback de admin é
+    // só para a resposta de uma API antiga, que ainda não mandava a lista.
+    const meus = new Set(user?.modulos || []);
+    const pode = (modulo) => isAdmin || meus.has(modulo);
+    return { user, setUser, loading, login, logout, isAdmin, pode };
+  }, [user, loading, login, logout]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

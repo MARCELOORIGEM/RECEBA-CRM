@@ -10,11 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .. import audit, pg, repo
 from ..deps import get_current_user, require_admin
+from ..permissoes import acesso
 from ..models import LeadInput, LeadStagePatch
 from ..repo import get_or_404
 from ..security import now_iso, now_utc
 
-router = APIRouter(prefix="/leads", tags=["funil"])
+router = APIRouter(prefix="/leads", tags=["funil"], dependencies=[Depends(acesso("funil"))])
 
 STAGES = ["novo", "contatado", "negociacao", "proposta", "ganho", "perdido"]
 STAGE_LABEL = {

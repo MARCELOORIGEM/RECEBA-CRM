@@ -95,9 +95,13 @@ async def redefinir(data: NovaSenha):
     if not usuario:
         raise invalido
 
+    agora = now_utc()
     await repo.atualizar("users", usuario["id"], {
         "password_hash": hash_password(data.nova_senha),
-        "updated_at": now_utc(),
+        # Quem redefine por link perdeu a senha — ou alguém a descobriu. As
+        # sessões abertas com a antiga caem.
+        "sessoes_desde": agora,
+        "updated_at": agora,
     })
     # Uso único.
     await pg.executar("DELETE FROM password_resets WHERE user_id = $1", usuario["id"])

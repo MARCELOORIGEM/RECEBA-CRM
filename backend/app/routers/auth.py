@@ -6,8 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from .. import audit, pg, repo
 from ..config import settings
-from ..deps import get_current_user
+from ..deps import get_current_user, sessao_cortada
 from ..models import LoginInput, PasswordChange, ProfileUpdate, RegisterInput
+from ..permissoes import modulos_de
 from ..rede import ip_do_cliente
 from ..security import (
     clear_auth_cookies,
@@ -31,6 +32,7 @@ def _publico(user: dict) -> dict:
         "name": user["name"],
         "email": user["email"],
         "role": user.get("role", "manager"),
+        "modulos": modulos_de(user),
     }
 
 
@@ -142,7 +144,9 @@ async def update_profile(data: ProfileUpdate, user: dict = Depends(get_current_u
 
 
 @router.post("/password")
-async def change_password(data: PasswordChange, user: dict = Depends(get_current_user)):
+async def change_password(
+    data: PasswordChange, response: Response, user: dict = Depends(get_current_user)
+):
     """Troca da própria senha.
 
     Antes só existia a edição de usuários, restrita ao administrador: um gestor
@@ -154,10 +158,20 @@ async def change_password(data: PasswordChange, user: dict = Depends(get_current
     if verify_password(data.new_password, doc["password_hash"]):
         raise HTTPException(status_code=400, detail="A nova senha é igual à atual")
 
+    agora = now_utc()
     await repo.atualizar("users", user["id"], {
         "password_hash": hash_password(data.new_password),
-        "updated_at": now_utc(),
+        "sessoes_desde": agora,
+        "updated_at": agora,
     })
+    # O corte derruba as sessões abertas com a senha antiga — inclusive num
+    # celular esquecido logado. Esta aqui ganha cookies novos, para quem
+    # acabou de trocar a senha não ser posto para fora junto.
+    set_auth_cookies(
+        response,
+        create_access_token(user["id"], user["email"], user.get("role", "manager")),
+        create_refresh_token(user["id"]),
+    )
     # Trocar a senha invalida os links de redefinição pendentes: quem pediu um
     # link e depois lembrou a senha não deixa uma porta aberta para trás.
     await pg.executar("DELETE FROM password_resets WHERE user_id = $1", user["id"])
@@ -180,6 +194,8 @@ async def refresh(request: Request, response: Response):
     user = await repo.pegar("users", payload.get("sub") or "")
     if not user or user.get("active") is False:
         raise HTTPException(status_code=401, detail="Usuário não encontrado")
+    if sessao_cortada(user, payload):
+        raise HTTPException(status_code=401, detail="Sua sessão foi encerrada. Entre novamente.")
 
     set_access_cookie(
         response,

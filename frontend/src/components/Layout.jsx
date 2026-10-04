@@ -19,27 +19,27 @@ import ErrorBoundary from "@/components/ErrorBoundary";
    Os rótulos encurtaram ("Contratos & Pagamentos" -> "Financeiro"): na
    horizontal, nome comprido rouba espaço de todos os outros itens. */
 const NAV = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, testid: "sidebar-link-dashboard" },
-  { to: "/pedidos", label: "Pedidos", icon: Package, testid: "sidebar-link-pedidos" },
-  { to: "/funil", label: "Funil", icon: Filter, testid: "sidebar-link-funil" },
+  { to: "/", modulo: "dashboard", label: "Dashboard", icon: LayoutDashboard, testid: "sidebar-link-dashboard" },
+  { to: "/pedidos", modulo: "pedidos", label: "Pedidos", icon: Package, testid: "sidebar-link-pedidos" },
+  { to: "/funil", modulo: "funil", label: "Funil", icon: Filter, testid: "sidebar-link-funil" },
   {
-    to: "/atividades",
+    to: "/atividades", modulo: "atividades",
     label: "Atividades",
     icon: FileText,
     testid: "sidebar-link-atividades",
     badge: "atividades",
   },
-  { to: "/restaurantes", label: "Restaurantes", icon: Store, testid: "sidebar-link-restaurantes" },
-  { to: "/entregadores", label: "Entregadores", icon: Bike, testid: "sidebar-link-entregadores" },
-  { to: "/formularios", label: "Formulários", icon: FileInput, testid: "sidebar-link-formularios" },
+  { to: "/restaurantes", modulo: "restaurantes", label: "Restaurantes", icon: Store, testid: "sidebar-link-restaurantes" },
+  { to: "/entregadores", modulo: "entregadores", label: "Entregadores", icon: Bike, testid: "sidebar-link-entregadores" },
+  { to: "/formularios", modulo: "formularios", label: "Formulários", icon: FileInput, testid: "sidebar-link-formularios" },
   {
-    to: "/contratos-pagamentos",
+    to: "/contratos-pagamentos", modulo: "financeiro",
     label: "Financeiro",
     icon: FileText,
     testid: "sidebar-link-contratos",
   },
-  { to: "/relatorios", label: "Relatórios", icon: BarChart3, testid: "sidebar-link-relatorios" },
-  { to: "/integracoes", label: "Integrações", icon: Plug, testid: "sidebar-link-integracoes" },
+  { to: "/relatorios", modulo: "relatorios", label: "Relatórios", icon: BarChart3, testid: "sidebar-link-relatorios" },
+  { to: "/integracoes", modulo: "integracoes", label: "Integrações", icon: Plug, testid: "sidebar-link-integracoes" },
   {
     to: "/usuarios",
     label: "Usuários",
@@ -64,7 +64,7 @@ const TITULOS = {
 };
 
 export default function Layout() {
-  const { user, logout, isAdmin } = useAuth();
+  const { user, logout, isAdmin, pode } = useAuth();
   const location = useLocation();
   const [menuMovel, setMenuMovel] = useState(false);
   const [menuConta, setMenuConta] = useState(false);
@@ -100,11 +100,13 @@ export default function Layout() {
     queryKey: ["activities-summary"],
     queryFn: async () => (await api.get("/activities/summary")).data,
     refetchInterval: 60_000,
+    // Sem a tela de Atividades a API responde 403; não adianta perguntar.
+    enabled: pode("atividades"),
   });
 
   const contadores = { atividades: resumo?.atrasadas || 0 };
   const [titulo, subtitulo] = TITULOS[location.pathname] || ["Painel", "Central de operações"];
-  const visiveis = NAV.filter((i) => !i.adminOnly || isAdmin);
+  const visiveis = NAV.filter((i) => (i.adminOnly ? isAdmin : pode(i.modulo)));
 
   const iniciais = (user?.name || "U")
     .split(" ")
@@ -285,7 +287,7 @@ export default function Layout() {
         </ErrorBoundary>
       </main>
 
-      <CommandPalette isAdmin={isAdmin} />
+      <CommandPalette isAdmin={isAdmin} pode={pode} />
       <AccountDialog open={conta} onOpenChange={setConta} />
     </div>
   );
