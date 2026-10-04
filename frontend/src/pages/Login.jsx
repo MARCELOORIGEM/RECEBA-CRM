@@ -239,13 +239,6 @@ export default function Login() {
                 </span>
               </h1>
 
-              <p
-                className="text-slate-400 text-base leading-relaxed animate-reveal-up"
-                style={{ animationDelay: "660ms" }}
-              >
-                Restaurantes, entregadores, contratos e repasses — do primeiro contato
-                comercial ao acerto financeiro de cada entrega.
-              </p>
             </div>
 
             <ul className="space-y-3">
