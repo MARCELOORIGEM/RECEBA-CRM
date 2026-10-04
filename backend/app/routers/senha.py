@@ -18,17 +18,15 @@ import secrets
 import uuid
 from datetime import timedelta
 
-from bson import ObjectId
-from bson.errors import InvalidId
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
 from typing import Annotated
 
-from .. import audit
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from .. import audit, pg, repo
 from ..config import settings
-from ..db import db
 from ..deps import require_admin
-from ..security import hash_password, now_iso, now_utc
+from ..security import hash_password, now_utc
 
 router = APIRouter(prefix="/senha", tags=["senha"])
 
@@ -47,25 +45,19 @@ class NovaSenha(BaseModel):
 @router.post("/link/{uid}")
 async def gerar_link(uid: str, admin: dict = Depends(require_admin)):
     """Cria um link de redefinição para a conta indicada."""
-    try:
-        oid = ObjectId(uid)
-    except InvalidId:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado")
-
-    usuario = await db.users.find_one({"_id": oid}, {"password_hash": 0})
+    usuario = await repo.pegar("users", uid)
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
     token = secrets.token_urlsafe(32)
     # Um pedido ativo por conta: gerar outro derruba o anterior.
-    await db.password_resets.delete_many({"user_id": uid})
-    await db.password_resets.insert_one({
+    await pg.executar("DELETE FROM password_resets WHERE user_id = $1", uid)
+    await repo.inserir("password_resets", {
         "id": str(uuid.uuid4()),
         "user_id": uid,
         "token_hash": _hash(token),
         "expira_em": now_utc() + timedelta(minutes=VALIDADE_MINUTOS),
         "criado_por": admin["name"],
-        "created_at": now_iso(),
     })
     await audit.record(
         admin, "gerou link de redefinição", "usuário", uid, label=usuario["email"]
@@ -83,7 +75,10 @@ async def gerar_link(uid: str, admin: dict = Depends(require_admin)):
 @router.post("/redefinir")
 async def redefinir(data: NovaSenha):
     """Troca a senha usando o token do link. Rota aberta — o token é a chave."""
-    pedido = await db.password_resets.find_one({"token_hash": _hash(data.token)})
+    # Sem índice TTL no Postgres: os pedidos vencidos saem aqui, na própria
+    # rota que os consulta (mesmo raciocínio das tentativas de login).
+    await pg.executar("DELETE FROM password_resets WHERE expira_em < $1", now_utc())
+    pedido = await repo.um_por("password_resets", "token_hash", _hash(data.token))
     # Mesma resposta para token inexistente e token vencido: distinguir os dois
     # contaria a um atacante que o token existiu.
     invalido = HTTPException(
@@ -92,29 +87,23 @@ async def redefinir(data: NovaSenha):
     if not pedido:
         raise invalido
 
-    expira = pedido["expira_em"]
-    if expira.tzinfo is None:
-        expira = expira.replace(tzinfo=now_utc().tzinfo)
-    if expira < now_utc():
-        await db.password_resets.delete_one({"id": pedido["id"]})
+    if pedido["expira_em"] < now_utc():
+        await repo.remover("password_resets", pedido["id"])
         raise invalido
 
-    try:
-        oid = ObjectId(pedido["user_id"])
-    except InvalidId:
-        raise invalido
-    usuario = await db.users.find_one({"_id": oid})
+    usuario = await repo.pegar("users", pedido["user_id"])
     if not usuario:
         raise invalido
 
-    await db.users.update_one(
-        {"_id": oid}, {"$set": {"password_hash": hash_password(data.nova_senha)}}
-    )
+    await repo.atualizar("users", usuario["id"], {
+        "password_hash": hash_password(data.nova_senha),
+        "updated_at": now_utc(),
+    })
     # Uso único.
-    await db.password_resets.delete_many({"user_id": pedido["user_id"]})
+    await pg.executar("DELETE FROM password_resets WHERE user_id = $1", usuario["id"])
     # As tentativas de login erradas somem junto: quem acabou de redefinir não
     # pode cair no bloqueio de força bruta logo na primeira tentativa.
-    await db.login_attempts.delete_many({"email": usuario["email"]})
+    await pg.executar("DELETE FROM login_attempts WHERE email = $1", usuario["email"])
 
     await audit.record(
         {"id": pedido["user_id"], "name": usuario["name"], "email": usuario["email"]},

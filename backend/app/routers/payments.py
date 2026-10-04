@@ -1,39 +1,46 @@
 import uuid
-from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import audit
-from ..db import db
+from .. import audit, pg, repo, tempo
 from ..deps import get_current_user, require_admin
 from ..models import PaymentInput
-from ..repo import PROJECTION, get_or_404, paginate, regex_filter
-from ..security import now_iso
+from ..repo import get_or_404
+from ..security import now_utc
 
 router = APIRouter(prefix="/payments", tags=["pagamentos"])
 
 COLLECTION = {"restaurante": "restaurants", "entregador": "drivers"}
 
 
-def _serialize(doc: dict) -> dict:
-    if isinstance(doc.get("due_date"), date):
-        doc["due_date"] = doc["due_date"].isoformat()
-    return doc
-
-
 async def _link_creditor(data: dict) -> dict:
-    coll = COLLECTION[data["creditor_type"]]
-    party = None
+    tabela = COLLECTION[data["creditor_type"]]
     if data.get("creditor_id"):
-        party = await db[coll].find_one({"id": data["creditor_id"]}, PROJECTION)
+        party = await repo.pegar(tabela, data["creditor_id"])
         if not party:
             raise HTTPException(status_code=404, detail="Credor não encontrado")
     else:
-        party = await db[coll].find_one({"name": data["creditor"]}, PROJECTION)
+        party = await repo.um_por(tabela, "name", data["creditor"])
     if party:
         data["creditor_id"] = party["id"]
         data["creditor"] = party["name"]
     return data
+
+
+async def _mover_saldo(pagamento: dict, sinal: int) -> None:
+    """Baixa (sinal -1) ou devolve (sinal +1) o saldo do credor."""
+    if not pagamento.get("creditor_id"):
+        return
+    valor = float(pagamento.get("amount") or 0)
+    if pagamento["creditor_type"] == "entregador":
+        await repo.incrementar(
+            "drivers", pagamento["creditor_id"],
+            {"balance_due": sinal * valor, "paid_total": -sinal * valor},
+        )
+    else:
+        await repo.incrementar(
+            "restaurants", pagamento["creditor_id"], {"commission_due": sinal * valor}
+        )
 
 
 @router.get("")
@@ -48,35 +55,32 @@ async def list_payments(
     page_size: int = 50,
     user: dict = Depends(get_current_user),
 ):
-    query: dict = {}
+    f = repo.filtro("payments")
     if status != "todos":
-        query["status"] = status
+        f.igual("status", status)
     if creditor_type != "todos":
-        query["creditor_type"] = creditor_type
-    if creditor_id:
-        query["creditor_id"] = creditor_id
-    if date_from or date_to:
-        rng: dict = {}
-        if date_from:
-            rng["$gte"] = date_from
-        if date_to:
-            rng["$lte"] = date_to
-        query["due_date"] = rng
-    if search.strip():
-        query.update(regex_filter(search, ["creditor", "notes"]))
+        f.igual("creditor_type", creditor_type)
+    f.igual("creditor_id", creditor_id)
+    f.desde("due_date", tempo.data_do_filtro(date_from))
+    f.ate("due_date", tempo.data_do_filtro(date_to))
+    f.busca(search, ["creditor", "notes"])
 
-    result = await paginate("payments", query, page=page, page_size=page_size,
-                            sort_field="due_date", sort_dir="asc")
+    result = await repo.paginar("payments", f, page=page, page_size=page_size,
+                                ordenar_por="due_date", direcao="asc")
 
     # Totais do filtro inteiro, não só da página — o resumo financeiro precisa do
     # conjunto todo. Antes o frontend somava apenas o que estava carregado.
-    pipeline = [
-        {"$match": query},
-        {"$group": {"_id": "$status", "total": {"$sum": "$amount"}, "qtd": {"$sum": 1}}},
-    ]
-    buckets = {r["_id"]: r async for r in db.payments.aggregate(pipeline)}
+    onde, args = f.onde()
+    buckets = {
+        r["status"]: r["total"]
+        for r in await pg.varios(
+            f"SELECT status, COALESCE(SUM(amount), 0) AS total FROM payments {onde} "
+            "GROUP BY status",
+            *args,
+        )
+    }
     result["totals"] = {
-        k: round(buckets.get(k, {}).get("total", 0.0), 2)
+        k: round(float(buckets.get(k, 0.0)), 2)
         for k in ("pendente", "pago", "atrasado", "cancelado")
     }
     result["totals"]["geral"] = round(sum(result["totals"].values()), 2)
@@ -90,12 +94,12 @@ async def get_payment(pid: str, user: dict = Depends(get_current_user)):
 
 @router.post("", status_code=201)
 async def create_payment(data: PaymentInput, user: dict = Depends(get_current_user)):
-    doc = _serialize(await _link_creditor(data.model_dump()))
-    doc.update({"id": str(uuid.uuid4()), "paid_at": None, "created_at": now_iso(),
-                "updated_at": now_iso(), "created_by": user["name"]})
-    await db.payments.insert_one(dict(doc))
-    await audit.record(user, "criou", "pagamento", doc["id"], label=doc["creditor"], after=doc)
-    return await get_or_404("payments", doc["id"], "Pagamento")
+    doc = await _link_creditor(data.model_dump())
+    doc.update({"id": str(uuid.uuid4()), "created_by": user["name"]})
+    criado = await repo.inserir("payments", doc)
+    await audit.record(user, "criou", "pagamento", criado["id"], label=criado["creditor"],
+                       after=criado)
+    return criado
 
 
 @router.put("/{pid}")
@@ -105,10 +109,9 @@ async def update_payment(pid: str, data: PaymentInput, user: dict = Depends(get_
         raise HTTPException(
             status_code=409, detail="Pagamento liquidado não pode ser editado. Estorne antes."
         )
-    patch = _serialize(await _link_creditor(data.model_dump()))
-    patch["updated_at"] = now_iso()
-    await db.payments.update_one({"id": pid}, {"$set": patch})
-    after = await db.payments.find_one({"id": pid}, PROJECTION)
+    patch = await _link_creditor(data.model_dump())
+    patch["updated_at"] = now_utc()
+    after = await repo.atualizar("payments", pid, patch)
     await audit.record(
         user, "atualizou", "pagamento", pid, label=after["creditor"], before=before, after=after
     )
@@ -126,22 +129,19 @@ async def settle_payment(pid: str, user: dict = Depends(get_current_user)):
     if before["status"] == "pago":
         raise HTTPException(status_code=409, detail="Pagamento já está liquidado")
 
-    await db.payments.update_one(
-        {"id": pid}, {"$set": {"status": "pago", "paid_at": now_iso(), "updated_at": now_iso()}}
+    # A troca de status é condicional: dois cliques em "liquidar" ao mesmo
+    # tempo passariam os dois pela checagem acima, e o saldo seria baixado em
+    # dobro. Só quem de fato mudou a linha move o saldo.
+    agora = now_utc()
+    after = await pg.um(
+        "UPDATE payments SET status = 'pago', paid_at = $2, updated_at = $2 "
+        "WHERE id = $1 AND status <> 'pago' RETURNING *",
+        pid, agora,
     )
-    amount = float(before.get("amount") or 0)
-    if before.get("creditor_id"):
-        if before["creditor_type"] == "entregador":
-            await db.drivers.update_one(
-                {"id": before["creditor_id"]},
-                {"$inc": {"balance_due": -amount, "paid_total": amount}},
-            )
-        else:
-            await db.restaurants.update_one(
-                {"id": before["creditor_id"]}, {"$inc": {"commission_due": -amount}}
-            )
+    if not after:
+        raise HTTPException(status_code=409, detail="Pagamento já está liquidado")
+    await _mover_saldo(before, -1)
 
-    after = await db.payments.find_one({"id": pid}, PROJECTION)
     await audit.record(
         user, "liquidou", "pagamento", pid, label=after["creditor"], before=before, after=after
     )
@@ -155,21 +155,15 @@ async def reopen_payment(pid: str, admin: dict = Depends(require_admin)):
     if before["status"] != "pago":
         raise HTTPException(status_code=409, detail="Só é possível estornar pagamento liquidado")
 
-    amount = float(before.get("amount") or 0)
-    if before.get("creditor_id"):
-        if before["creditor_type"] == "entregador":
-            await db.drivers.update_one(
-                {"id": before["creditor_id"]},
-                {"$inc": {"balance_due": amount, "paid_total": -amount}},
-            )
-        else:
-            await db.restaurants.update_one(
-                {"id": before["creditor_id"]}, {"$inc": {"commission_due": amount}}
-            )
-    await db.payments.update_one(
-        {"id": pid}, {"$set": {"status": "pendente", "paid_at": None, "updated_at": now_iso()}}
+    after = await pg.um(
+        "UPDATE payments SET status = 'pendente', paid_at = NULL, updated_at = $2 "
+        "WHERE id = $1 AND status = 'pago' RETURNING *",
+        pid, now_utc(),
     )
-    after = await db.payments.find_one({"id": pid}, PROJECTION)
+    if not after:
+        raise HTTPException(status_code=409, detail="Só é possível estornar pagamento liquidado")
+    await _mover_saldo(before, +1)
+
     await audit.record(
         admin, "estornou", "pagamento", pid, label=after["creditor"], before=before, after=after
     )
@@ -184,6 +178,6 @@ async def delete_payment(pid: str, admin: dict = Depends(require_admin)):
             status_code=409,
             detail="Pagamento liquidado faz parte do histórico financeiro. Estorne antes de excluir.",
         )
-    await db.payments.delete_one({"id": pid})
+    await repo.remover("payments", pid)
     await audit.record(admin, "removeu", "pagamento", pid, label=doc["creditor"], before=doc)
     return {"message": "Removido"}

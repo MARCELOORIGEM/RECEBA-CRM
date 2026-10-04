@@ -2,12 +2,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import audit, financials
-from ..db import db, next_sequence
+from .. import audit, financials, pg, repo, tempo
 from ..deps import get_current_user, require_admin
 from ..models import OrderAssign, OrderInput, OrderStatusPatch
-from ..repo import PROJECTION, get_or_404, paginate, regex_filter
-from ..security import now_iso
+from ..repo import get_or_404
+from ..security import now_utc
 
 router = APIRouter(prefix="/orders", tags=["pedidos"])
 
@@ -21,15 +20,15 @@ FLOW = {
 }
 
 
-async def _resolve_party(collection: str, pid: str, name: str, label: str) -> tuple[str, str]:
+async def _resolve_party(tabela: str, pid: str, name: str, label: str) -> tuple[str, str]:
     """Aceita id ou nome e devolve o par (id, nome) coerente."""
     if pid:
-        doc = await db[collection].find_one({"id": pid}, PROJECTION)
+        doc = await repo.pegar(tabela, pid)
         if not doc:
             raise HTTPException(status_code=404, detail=f"{label} não encontrado")
         return doc["id"], doc["name"]
     if name:
-        doc = await db[collection].find_one({"name": name}, PROJECTION)
+        doc = await repo.um_por(tabela, "name", name)
         if doc:
             return doc["id"], doc["name"]
         return "", name
@@ -48,25 +47,20 @@ async def list_orders(
     page_size: int = 50,
     user: dict = Depends(get_current_user),
 ):
-    query: dict = {}
-    if status and status != "todos":
-        query["status"] = status
-    if restaurant_id:
-        query["restaurant_id"] = restaurant_id
-    if driver_id:
-        query["driver_id"] = driver_id
-    if date_from or date_to:
-        rng: dict = {}
-        if date_from:
-            rng["$gte"] = date_from
-        if date_to:
-            rng["$lte"] = date_to + "T23:59:59.999999+00:00"
-        query["created_at"] = rng
-    if search.strip():
-        query.update(
-            regex_filter(search, ["code", "customer_name", "restaurant_name", "driver_name"])
-        )
-    return await paginate("orders", query, page=page, page_size=page_size)
+    f = repo.filtro("orders")
+    if status != "todos":
+        f.igual("status", status)
+    f.igual("restaurant_id", restaurant_id)
+    f.igual("driver_id", driver_id)
+    # As datas do filtro são dias do calendário local. O corte em UTC jogava
+    # para o dia seguinte o pedido das 21h às 23h59 — o pico do delivery.
+    inicio, fim = tempo.data_do_filtro(date_from), tempo.data_do_filtro(date_to)
+    if inicio:
+        f.desde("created_at", tempo.inicio_da_data(inicio))
+    if fim:
+        f.ate("created_at", tempo.fim_da_data(fim))
+    f.busca(search, ["code", "customer_name", "restaurant_name", "driver_name"])
+    return await repo.paginar("orders", f, page=page, page_size=page_size)
 
 
 @router.get("/{oid}")
@@ -83,23 +77,18 @@ async def create_order(data: OrderInput, user: dict = Depends(get_current_user))
     doc["driver_id"], doc["driver_name"] = await _resolve_party(
         "drivers", doc["driver_id"], doc["driver_name"], "Entregador"
     )
-    seq = await next_sequence("order_code")
+    seq = await pg.proximo_numero("order_code")
     doc.update({
         "id": str(uuid.uuid4()),
         "code": f"PED-{1000 + seq}",
-        "financials_applied": False,
-        "driver_earning": 0.0,
-        "platform_commission": 0.0,
-        "delivered_at": None,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
         "created_by": user["name"],
     })
-    await db.orders.insert_one(dict(doc))
-    if doc["status"] == "entregue":
-        await financials.apply_delivery(doc)
-    await audit.record(user, "criou", "pedido", doc["id"], label=doc["code"], after=doc)
-    return await get_or_404("orders", doc["id"], "Pedido")
+    pedido = await repo.inserir("orders", doc)
+    if pedido["status"] == "entregue":
+        await financials.apply_delivery(pedido)
+        pedido = await repo.pegar("orders", pedido["id"])
+    await audit.record(user, "criou", "pedido", pedido["id"], label=pedido["code"], after=pedido)
+    return pedido
 
 
 @router.put("/{oid}")
@@ -113,9 +102,8 @@ async def update_order(oid: str, data: OrderInput, user: dict = Depends(get_curr
         "drivers", patch["driver_id"], patch["driver_name"], "Entregador"
     )
     patch["status"] = before["status"]  # status muda só pelo endpoint dedicado
-    patch["updated_at"] = now_iso()
-    await db.orders.update_one({"id": oid}, {"$set": patch})
-    after = await db.orders.find_one({"id": oid}, PROJECTION)
+    patch["updated_at"] = now_utc()
+    after = await repo.atualizar("orders", oid, patch)
     await audit.record(
         user, "atualizou", "pedido", oid, label=after["code"], before=before, after=after
     )
@@ -138,16 +126,13 @@ async def update_status(oid: str, body: OrderStatusPatch, user: dict = Depends(g
             status_code=409, detail="Atribua um entregador antes de marcar como entregue."
         )
 
-    await db.orders.update_one(
-        {"id": oid}, {"$set": {"status": novo, "updated_at": now_iso()}}
-    )
-    fresh = await db.orders.find_one({"id": oid}, PROJECTION)
+    fresh = await repo.atualizar("orders", oid, {"status": novo, "updated_at": now_utc()})
     if novo == "entregue":
         await financials.apply_delivery(fresh)
     elif atual == "entregue":
         await financials.revert_delivery(before)
 
-    after = await db.orders.find_one({"id": oid}, PROJECTION)
+    after = await repo.pegar("orders", oid)
     await audit.record(
         user, "mudou status", "pedido", oid, label=after["code"], before=before, after=after
     )
@@ -162,11 +147,9 @@ async def assign_driver(oid: str, body: OrderAssign, user: dict = Depends(get_cu
             status_code=409, detail="Pedido finalizado não aceita troca de entregador."
         )
     did, dname = await _resolve_party("drivers", body.driver_id, body.driver_name, "Entregador")
-    await db.orders.update_one(
-        {"id": oid},
-        {"$set": {"driver_id": did, "driver_name": dname, "updated_at": now_iso()}},
+    after = await repo.atualizar(
+        "orders", oid, {"driver_id": did, "driver_name": dname, "updated_at": now_utc()}
     )
-    after = await db.orders.find_one({"id": oid}, PROJECTION)
     await audit.record(
         user, "atribuiu entregador", "pedido", oid, label=after["code"], before=before, after=after
     )
@@ -177,6 +160,6 @@ async def assign_driver(oid: str, body: OrderAssign, user: dict = Depends(get_cu
 async def delete_order(oid: str, admin: dict = Depends(require_admin)):
     doc = await get_or_404("orders", oid, "Pedido")
     await financials.revert_delivery(doc)
-    await db.orders.delete_one({"id": oid})
+    await repo.remover("orders", oid)
     await audit.record(admin, "removeu", "pedido", oid, label=doc["code"], before=doc)
     return {"message": "Removido"}

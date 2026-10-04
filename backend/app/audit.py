@@ -3,7 +3,6 @@
 Um CRM guarda dinheiro e relacionamento comercial; sem registro de alterações
 não há como apurar divergência de repasse nem reverter um erro operacional.
 """
-import json
 import uuid
 from typing import Any
 
@@ -35,21 +34,20 @@ def _json_seguro(valor: Any) -> Any:
     return str(valor)
 
 
-def _diff(before: dict | None, after: dict | None) -> list[dict]:
-    """Lista do que mudou, pronta para o JSONB.
+def _diff(before: dict | None, after: dict | None) -> dict:
+    """O que mudou, indexado pelo campo: `{"category": {"de": ..., "para": ...}}`.
 
-    Virou lista (era dicionário com o nome do campo como chave) porque o painel
-    a exibe em ordem, e dicionário em JSONB não garante ordem nenhuma.
+    É o formato que o painel e a API sempre devolveram — a linha do tempo lista
+    as chaves para dizer o que mudou. As chaves vão em ordem alfabética; o JSONB
+    reordena as de um objeto, então ordem nenhuma aqui seria garantida mesmo.
     """
     before, after = before or {}, after or {}
     chaves = (set(before) | set(after)) - _REDACTED - _RUIDO
-    mudancas = []
+    mudancas: dict[str, Any] = {}
     for chave in sorted(chaves):
         de, para = before.get(chave), after.get(chave)
         if de != para:
-            mudancas.append(
-                {"campo": chave, "de": _json_seguro(de), "para": _json_seguro(para)}
-            )
+            mudancas[chave] = {"de": _json_seguro(de), "para": _json_seguro(para)}
     return mudancas
 
 

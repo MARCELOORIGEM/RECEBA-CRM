@@ -2,13 +2,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import audit
-from ..db import db
+from .. import audit, pg, repo, tempo
 from ..deps import get_current_user, require_admin
 from ..models import RestaurantInput
-from .. import tempo
-from ..repo import PROJECTION, get_or_404, paginate, regex_filter
-from ..security import now_iso
+from ..repo import get_or_404
+from ..security import now_utc
 
 router = APIRouter(prefix="/restaurants", tags=["restaurantes"])
 
@@ -22,13 +20,16 @@ async def _orders_this_month(ids: list[str]) -> dict[str, int]:
     """
     if not ids:
         return {}
-    inicio = tempo.inicio_do_mes().isoformat()
-    pipeline = [
-        {"$match": {"restaurant_id": {"$in": ids}, "status": "entregue",
-                    "created_at": {"$gte": inicio}}},
-        {"$group": {"_id": "$restaurant_id", "qtd": {"$sum": 1}}},
-    ]
-    return {r["_id"]: r["qtd"] async for r in db.orders.aggregate(pipeline)}
+    linhas = await pg.varios(
+        """
+        SELECT restaurant_id, count(*) AS qtd FROM orders
+         WHERE restaurant_id = ANY($1) AND status = 'entregue' AND created_at >= $2
+         GROUP BY restaurant_id
+        """,
+        ids,
+        tempo.inicio_do_mes(),
+    )
+    return {r["restaurant_id"]: r["qtd"] for r in linhas}
 
 
 async def _enrich(docs: list[dict]) -> list[dict]:
@@ -48,14 +49,13 @@ async def list_restaurants(
     sort_dir: str = "desc",
     user: dict = Depends(get_current_user),
 ):
-    query: dict = {}
-    if status and status != "todos":
-        query["status"] = status
-    if search.strip():
-        query.update(regex_filter(search, ["name", "cnpj", "contact_person", "phone", "category"]))
-    result = await paginate(
-        "restaurants", query, page=page, page_size=page_size,
-        sort_field=sort_field, sort_dir=sort_dir,
+    f = repo.filtro("restaurants")
+    if status != "todos":
+        f.igual("status", status)
+    f.busca(search, ["name", "cnpj", "contact_person", "phone", "category"])
+    result = await repo.paginar(
+        "restaurants", f, page=page, page_size=page_size,
+        ordenar_por=repo.campo_de_ordenacao("restaurants", sort_field), direcao=sort_dir,
     )
     result["items"] = await _enrich(result["items"])
     return result
@@ -70,48 +70,44 @@ async def get_restaurant(rid: str, user: dict = Depends(get_current_user)):
 @router.post("", status_code=201)
 async def create_restaurant(data: RestaurantInput, user: dict = Depends(get_current_user)):
     doc = data.model_dump()
-    if doc.get("cnpj") and await db.restaurants.find_one({"cnpj": doc["cnpj"]}):
+    if doc.get("cnpj") and await repo.existe("restaurants", "cnpj", doc["cnpj"]):
         raise HTTPException(status_code=409, detail="Já existe um restaurante com este CNPJ")
-    doc.update({
-        "id": str(uuid.uuid4()),
-        "orders_total": 0,
-        "revenue_total": 0.0,
-        "commission_due": 0.0,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-        "created_by": user["name"],
-    })
-    await db.restaurants.insert_one(dict(doc))
-    await audit.record(user, "criou", "restaurante", doc["id"], label=doc["name"], after=doc)
-    return await get_or_404("restaurants", doc["id"], "Restaurante")
+    doc.update({"id": str(uuid.uuid4()), "created_by": user["name"]})
+    # Contadores, saldos e datas vêm dos DEFAULT do schema.
+    criado = await repo.inserir("restaurants", doc)
+    await audit.record(user, "criou", "restaurante", criado["id"], label=criado["name"], after=criado)
+    return (await _enrich([criado]))[0]
 
 
 @router.put("/{rid}")
 async def update_restaurant(rid: str, data: RestaurantInput, user: dict = Depends(get_current_user)):
     before = await get_or_404("restaurants", rid, "Restaurante")
     patch = data.model_dump()
-    patch["updated_at"] = now_iso()
-    await db.restaurants.update_one({"id": rid}, {"$set": patch})
-    after = await db.restaurants.find_one({"id": rid}, PROJECTION)
+    patch["updated_at"] = now_utc()
+    after = await repo.atualizar("restaurants", rid, patch)
 
     # O nome aparece em pedidos, contratos e pagamentos antigos. Sem propagar,
     # o histórico passa a apontar para um nome que não existe mais.
     if before["name"] != after["name"]:
-        await db.orders.update_many(
-            {"restaurant_id": rid}, {"$set": {"restaurant_name": after["name"]}}
+        await repo.atualizar_onde(
+            "orders", repo.filtro("orders").igual("restaurant_id", rid),
+            {"restaurant_name": after["name"]},
         )
-        await db.contracts.update_many(
-            {"party_id": rid, "party_type": "restaurante"}, {"$set": {"party_name": after["name"]}}
+        await repo.atualizar_onde(
+            "contracts",
+            repo.filtro("contracts").igual("party_id", rid).igual("party_type", "restaurante"),
+            {"party_name": after["name"]},
         )
-        await db.payments.update_many(
-            {"creditor_id": rid, "creditor_type": "restaurante"},
-            {"$set": {"creditor": after["name"]}},
+        await repo.atualizar_onde(
+            "payments",
+            repo.filtro("payments").igual("creditor_id", rid).igual("creditor_type", "restaurante"),
+            {"creditor": after["name"]},
         )
 
     await audit.record(
         user, "atualizou", "restaurante", rid, label=after["name"], before=before, after=after
     )
-    return after
+    return (await _enrich([after]))[0]
 
 
 @router.delete("/{rid}")
@@ -119,7 +115,7 @@ async def delete_restaurant(
     rid: str, force: bool = Query(False), admin: dict = Depends(require_admin)
 ):
     doc = await get_or_404("restaurants", rid, "Restaurante")
-    linked = await db.orders.count_documents({"restaurant_id": rid})
+    linked = await repo.contar("orders", repo.filtro("orders").igual("restaurant_id", rid))
     if linked and not force:
         nome = doc["name"]
         raise HTTPException(
@@ -129,6 +125,6 @@ async def delete_restaurant(
                 "Mude o status para 'inativo' ou confirme a exclusão definitiva."
             ),
         )
-    await db.restaurants.delete_one({"id": rid})
+    await repo.remover("restaurants", rid)
     await audit.record(admin, "removeu", "restaurante", rid, label=doc["name"], before=doc)
     return {"message": "Removido"}

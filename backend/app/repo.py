@@ -12,7 +12,7 @@ existe, para que esse erro apareça no CI e não em produção.
 """
 from __future__ import annotations
 
-from typing import Any, Iterable
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -147,24 +147,57 @@ async def atualizar(tabela: str, doc_id: str, campos: dict) -> dict | None:
     return await pg.um(sql, *campos.values(), doc_id)
 
 
-async def incrementar(tabela: str, doc_id: str, campos: dict[str, float]) -> dict | None:
+async def incrementar(
+    tabela: str, doc_id: str, campos: dict[str, float], *, definir: dict | None = None
+) -> dict | None:
     """Soma valores a colunas numéricas, no banco.
 
     Era `$inc`. Importa ser feito pelo banco, e não lendo-somando-gravando: dois
     pedidos entregues ao mesmo tempo para o mesmo entregador perderiam um dos
     lançamentos, e a diferença só apareceria no fechamento do mês.
+
+    `definir` grava outras colunas no mesmo UPDATE — o `$set` que andava junto
+    do `$inc`, quase sempre o `updated_at`.
     """
-    if not campos:
+    definir = definir or {}
+    if not campos and not definir:
         return await pegar(tabela, doc_id)
-    atribuicoes = [
-        f"{coluna(tabela, k)} = {coluna(tabela, k)} + ${i}"
-        for i, k in enumerate(campos, start=1)
-    ]
+    args: list = []
+    atribuicoes = []
+    for k, v in campos.items():
+        args.append(v)
+        atribuicoes.append(f"{coluna(tabela, k)} = {coluna(tabela, k)} + ${len(args)}")
+    for k, v in definir.items():
+        args.append(v)
+        atribuicoes.append(f"{coluna(tabela, k)} = ${len(args)}")
+    args.append(doc_id)
     sql = (
         f'UPDATE "{_tabela(tabela)}" SET {", ".join(atribuicoes)} '
-        f"WHERE id = ${len(campos) + 1} RETURNING *"
+        f"WHERE id = ${len(args)} RETURNING *"
     )
-    return await pg.um(sql, *campos.values(), doc_id)
+    return await pg.um(sql, *args)
+
+
+async def atualizar_onde(tabela: str, filtro: Filtro, campos: dict) -> int:
+    """UPDATE em lote — o `update_many`. Devolve quantas linhas mudaram.
+
+    As condições do filtro já ocupam `$1..$n`; os valores do SET entram depois
+    deles, por isso a numeração parte de onde o filtro parou.
+    """
+    onde, args = filtro.onde()
+    if not onde:
+        # Mesmo motivo de `remover_onde`: sem condição, seria a tabela inteira.
+        raise ValueError(f"atualizar_onde em {tabela} sem nenhuma condição")
+    if not campos:
+        return 0
+    atribuicoes = []
+    for k, v in campos.items():
+        args.append(v)
+        atribuicoes.append(f"{coluna(tabela, k)} = ${len(args)}")
+    resultado = await pg.executar(
+        f'UPDATE "{_tabela(tabela)}" SET {", ".join(atribuicoes)} {onde}', *args
+    )
+    return int(resultado.rsplit(" ", 1)[-1] or 0)
 
 
 async def remover(tabela: str, doc_id: str) -> bool:
@@ -189,6 +222,18 @@ def _tabela(nome: str) -> str:
     if nome not in COLUNAS:
         raise ValueError(f"tabela desconhecida: {nome}")
     return nome
+
+
+def campo_de_ordenacao(tabela: str, campo: str, padrao: str = "created_at") -> str:
+    """O `sort_field` da query string, ou o padrão se não for coluna da tabela.
+
+    O Mongo ordenava por campo inexistente sem reclamar. Aqui o nome entra no
+    texto do SQL e é conferido antes (ver `consulta.coluna`), então um valor
+    torto vindo do navegador viraria 500. Cai no padrão, como antes.
+    """
+    from .consulta import COLUNAS
+
+    return campo if campo in COLUNAS.get(tabela, ()) else padrao
 
 
 def filtro(tabela: str) -> Filtro:

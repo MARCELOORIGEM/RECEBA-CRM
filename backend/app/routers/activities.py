@@ -7,14 +7,41 @@ import uuid
 
 from fastapi import APIRouter, Depends
 
-from .. import audit, tempo
-from ..db import db
+from .. import audit, pg, repo, tempo
+from ..consulta import Filtro
 from ..deps import get_current_user, require_admin
 from ..models import ActivityInput
-from ..repo import PROJECTION, get_or_404, paginate
-from ..security import now_iso, now_utc
+from ..repo import get_or_404
+from ..security import now_utc
 
 router = APIRouter(prefix="/activities", tags=["atividades"])
+
+
+def _recorte(f: Filtro, scope: str) -> Filtro:
+    """Aplica o recorte de agenda ao filtro.
+
+    Fronteiras no fuso do negócio: em UTC, uma tarefa marcada para as 22h em
+    São Paulo já caía no dia seguinte. A mesma função serve à lista e ao
+    contador da aba — os dois precisam bater.
+    """
+    inicio_hoje, fim_hoje = tempo.inicio_do_dia(), tempo.fim_do_dia()
+    if scope == "hoje":
+        # "Hoje" é o que vence hoje. O que já venceu tem aba própria; sem o
+        # limite inferior, as duas abas mostravam exatamente a mesma lista.
+        f.verdadeiro("done", False).desde("due_at", inicio_hoje).ate("due_at", fim_hoje)
+    elif scope == "atrasadas":
+        f.verdadeiro("done", False).antes_de("due_at", now_utc())
+    elif scope == "proximas":
+        f.verdadeiro("done", False).bruto('"due_at" > {}', fim_hoje)
+    elif scope == "semana":
+        f.verdadeiro("done", False).bruto('"due_at" > {}', fim_hoje).ate(
+            "due_at", tempo.fim_do_dia(7)
+        )
+    elif scope == "concluidas":
+        f.verdadeiro("done", True)
+    elif scope == "abertas":
+        f.verdadeiro("done", False)
+    return f
 
 
 @router.get("")
@@ -27,89 +54,64 @@ async def list_activities(
     page_size: int = 100,
     user: dict = Depends(get_current_user),
 ):
-    query: dict = {}
-    if related_type:
-        query["related_type"] = related_type
-    if related_id:
-        query["related_id"] = related_id
+    f = repo.filtro("activities")
+    f.igual("related_type", related_type)
+    f.igual("related_id", related_id)
     if kind != "todas":
-        query["kind"] = kind
+        f.igual("kind", kind)
+    _recorte(f, scope)
 
-    # Fronteiras no fuso do negócio: em UTC, uma tarefa marcada para as 22h em
-    # São Paulo já caía no dia seguinte.
-    agora = now_utc()
-    inicio_hoje = tempo.inicio_do_dia().isoformat()
-    fim_hoje = tempo.fim_do_dia().isoformat()
-    if scope == "hoje":
-        # "Hoje" é o que vence hoje. O que já venceu tem aba própria; sem o
-        # limite inferior, as duas abas mostravam exatamente a mesma lista.
-        query.update({"done": False, "due_at": {"$gte": inicio_hoje, "$lte": fim_hoje}})
-    elif scope == "atrasadas":
-        query.update({"done": False, "due_at": {"$ne": None, "$lt": agora.isoformat()}})
-    elif scope == "proximas":
-        query.update({"done": False, "due_at": {"$gt": fim_hoje}})
-    elif scope == "concluidas":
-        query["done"] = True
-    elif scope == "abertas":
-        query["done"] = False
-
-    sort_dir = "desc" if scope == "concluidas" else "asc"
-    sort_field = "completed_at" if scope == "concluidas" else "due_at"
-    return await paginate("activities", query, page=page, page_size=page_size,
-                          sort_field=sort_field, sort_dir=sort_dir)
+    concluidas = scope == "concluidas"
+    return await repo.paginar(
+        "activities", f, page=page, page_size=page_size,
+        ordenar_por="completed_at" if concluidas else "due_at",
+        direcao="desc" if concluidas else "asc",
+    )
 
 
 @router.get("/summary")
 async def summary(user: dict = Depends(get_current_user)):
-    agora = now_utc()
-    inicio_hoje = tempo.inicio_do_dia().isoformat()
-    fim_hoje = tempo.fim_do_dia().isoformat()
-    semana = tempo.fim_do_dia(7).isoformat()
-    # Os mesmos limites usados em `list_activities`: o contador da aba e a lista
-    # que ela abre precisam bater.
-    return {
-        "atrasadas": await db.activities.count_documents(
-            {"done": False, "due_at": {"$ne": None, "$lt": agora.isoformat()}}
-        ),
-        "hoje": await db.activities.count_documents(
-            {"done": False, "due_at": {"$gte": inicio_hoje, "$lte": fim_hoje}}
-        ),
-        "semana": await db.activities.count_documents(
-            {"done": False, "due_at": {"$gt": fim_hoje, "$lte": semana}}
-        ),
-        "abertas": await db.activities.count_documents({"done": False}),
-    }
+    # Uma ida ao banco para os quatro números, com os mesmos recortes da lista.
+    partes, args = [], []
+    for nome in ("atrasadas", "hoje", "semana", "abertas"):
+        # Os recortes vão todos no mesmo comando: cada um numera os próprios
+        # parâmetros a partir de onde o anterior parou.
+        f = _recorte(Filtro("activities", primeiro_parametro=len(args) + 1), nome)
+        onde, a = f.onde()
+        args.extend(a)
+        partes.append(f"count(*) FILTER ({onde}) AS {nome}")
+    return await pg.um(f"SELECT {', '.join(partes)} FROM activities", *args)
 
 
 @router.post("", status_code=201)
 async def create_activity(data: ActivityInput, user: dict = Depends(get_current_user)):
     doc = data.model_dump()
+    doc["due_at"] = tempo.com_fuso(doc["due_at"])
     # Interação é um registro do que já aconteceu; nasce concluída.
     if doc["kind"] == "interacao":
         doc["done"] = True
     doc.update({
         "id": str(uuid.uuid4()),
         "owner_name": doc.get("owner_name") or user["name"],
-        "completed_at": now_iso() if doc["done"] else None,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
+        "completed_at": now_utc() if doc["done"] else None,
         "created_by": user["name"],
     })
-    await db.activities.insert_one(dict(doc))
-    await audit.record(user, "criou", "atividade", doc["id"], label=doc["title"], after=doc)
-    return await get_or_404("activities", doc["id"], "Atividade")
+    criado = await repo.inserir("activities", doc)
+    await audit.record(user, "criou", "atividade", criado["id"], label=criado["title"],
+                       after=criado)
+    return criado
 
 
 @router.put("/{aid}")
 async def update_activity(aid: str, data: ActivityInput, user: dict = Depends(get_current_user)):
     before = await get_or_404("activities", aid, "Atividade")
     patch = data.model_dump()
-    patch["updated_at"] = now_iso()
+    patch["due_at"] = tempo.com_fuso(patch["due_at"])
+    patch["updated_at"] = now_utc()
     patch["completed_at"] = before.get("completed_at") if patch["done"] else None
     if patch["done"] and not patch["completed_at"]:
-        patch["completed_at"] = now_iso()
-    await db.activities.update_one({"id": aid}, {"$set": patch})
-    after = await db.activities.find_one({"id": aid}, PROJECTION)
+        patch["completed_at"] = now_utc()
+    after = await repo.atualizar("activities", aid, patch)
     await audit.record(user, "atualizou", "atividade", aid, label=after["title"],
                        before=before, after=after)
     return after
@@ -119,12 +121,11 @@ async def update_activity(aid: str, data: ActivityInput, user: dict = Depends(ge
 async def toggle_done(aid: str, user: dict = Depends(get_current_user)):
     before = await get_or_404("activities", aid, "Atividade")
     done = not before.get("done", False)
-    await db.activities.update_one(
-        {"id": aid},
-        {"$set": {"done": done, "completed_at": now_iso() if done else None,
-                  "updated_at": now_iso()}},
+    agora = now_utc()
+    return await repo.atualizar(
+        "activities", aid,
+        {"done": done, "completed_at": agora if done else None, "updated_at": agora},
     )
-    return await db.activities.find_one({"id": aid}, PROJECTION)
 
 
 @router.delete("/{aid}")
@@ -133,6 +134,6 @@ async def delete_activity(aid: str, user: dict = Depends(get_current_user)):
     # Interação já registrada é histórico: só o admin apaga.
     if doc.get("kind") == "interacao" and user.get("role") != "admin":
         await require_admin(user)
-    await db.activities.delete_one({"id": aid})
+    await repo.remover("activities", aid)
     await audit.record(user, "removeu", "atividade", aid, label=doc["title"], before=doc)
     return {"message": "Removido"}

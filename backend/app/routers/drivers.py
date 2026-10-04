@@ -2,12 +2,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import audit
-from ..db import db
+from .. import audit, repo
 from ..deps import get_current_user, require_admin
 from ..models import DriverInput, DriverStatusPatch
-from ..repo import PROJECTION, get_or_404, paginate, regex_filter
-from ..security import now_iso
+from ..repo import get_or_404
+from ..security import now_utc
 
 router = APIRouter(prefix="/drivers", tags=["entregadores"])
 
@@ -22,14 +21,13 @@ async def list_drivers(
     sort_dir: str = "desc",
     user: dict = Depends(get_current_user),
 ):
-    query: dict = {}
-    if status and status != "todos":
-        query["status"] = status
-    if search.strip():
-        query.update(regex_filter(search, ["name", "plate", "phone"]))
-    return await paginate(
-        "drivers", query, page=page, page_size=page_size,
-        sort_field=sort_field, sort_dir=sort_dir,
+    f = repo.filtro("drivers")
+    if status != "todos":
+        f.igual("status", status)
+    f.busca(search, ["name", "plate", "phone"])
+    return await repo.paginar(
+        "drivers", f, page=page, page_size=page_size,
+        ordenar_por=repo.campo_de_ordenacao("drivers", sort_field), direcao=sort_dir,
     )
 
 
@@ -41,37 +39,35 @@ async def get_driver(did: str, user: dict = Depends(get_current_user)):
 @router.post("", status_code=201)
 async def create_driver(data: DriverInput, user: dict = Depends(get_current_user)):
     doc = data.model_dump()
-    if doc.get("plate") and await db.drivers.find_one({"plate": doc["plate"]}):
+    if doc.get("plate") and await repo.existe("drivers", "plate", doc["plate"]):
         raise HTTPException(status_code=409, detail="Já existe um entregador com esta placa")
-    doc.update({
-        "id": str(uuid.uuid4()),
-        "total_deliveries": 0,
-        "balance_due": 0.0,
-        "paid_total": 0.0,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
-        "created_by": user["name"],
-    })
-    await db.drivers.insert_one(dict(doc))
-    await audit.record(user, "criou", "entregador", doc["id"], label=doc["name"], after=doc)
-    return await get_or_404("drivers", doc["id"], "Entregador")
+    doc.update({"id": str(uuid.uuid4()), "created_by": user["name"]})
+    # Contadores, saldos e datas vêm dos DEFAULT do schema.
+    criado = await repo.inserir("drivers", doc)
+    await audit.record(user, "criou", "entregador", criado["id"], label=criado["name"], after=criado)
+    return criado
 
 
 @router.put("/{did}")
 async def update_driver(did: str, data: DriverInput, user: dict = Depends(get_current_user)):
     before = await get_or_404("drivers", did, "Entregador")
     patch = data.model_dump()
-    patch["updated_at"] = now_iso()
-    await db.drivers.update_one({"id": did}, {"$set": patch})
-    after = await db.drivers.find_one({"id": did}, PROJECTION)
+    patch["updated_at"] = now_utc()
+    after = await repo.atualizar("drivers", did, patch)
     if before["name"] != after["name"]:
-        await db.orders.update_many({"driver_id": did}, {"$set": {"driver_name": after["name"]}})
-        await db.contracts.update_many(
-            {"party_id": did, "party_type": "entregador"}, {"$set": {"party_name": after["name"]}}
+        await repo.atualizar_onde(
+            "orders", repo.filtro("orders").igual("driver_id", did),
+            {"driver_name": after["name"]},
         )
-        await db.payments.update_many(
-            {"creditor_id": did, "creditor_type": "entregador"},
-            {"$set": {"creditor": after["name"]}},
+        await repo.atualizar_onde(
+            "contracts",
+            repo.filtro("contracts").igual("party_id", did).igual("party_type", "entregador"),
+            {"party_name": after["name"]},
+        )
+        await repo.atualizar_onde(
+            "payments",
+            repo.filtro("payments").igual("creditor_id", did).igual("creditor_type", "entregador"),
+            {"creditor": after["name"]},
         )
     await audit.record(
         user, "atualizou", "entregador", did, label=after["name"], before=before, after=after
@@ -82,10 +78,7 @@ async def update_driver(did: str, data: DriverInput, user: dict = Depends(get_cu
 @router.patch("/{did}/status")
 async def patch_status(did: str, body: DriverStatusPatch, user: dict = Depends(get_current_user)):
     before = await get_or_404("drivers", did, "Entregador")
-    await db.drivers.update_one(
-        {"id": did}, {"$set": {"status": body.status, "updated_at": now_iso()}}
-    )
-    after = await db.drivers.find_one({"id": did}, PROJECTION)
+    after = await repo.atualizar("drivers", did, {"status": body.status, "updated_at": now_utc()})
     await audit.record(
         user, "mudou status", "entregador", did, label=after["name"], before=before, after=after
     )
@@ -103,6 +96,6 @@ async def delete_driver(
             status_code=409,
             detail=f"{nome} tem saldo a receber em aberto. Liquide o repasse antes de excluir.",
         )
-    await db.drivers.delete_one({"id": did})
+    await repo.remover("drivers", did)
     await audit.record(admin, "removeu", "entregador", did, label=doc["name"], before=doc)
     return {"message": "Removido"}

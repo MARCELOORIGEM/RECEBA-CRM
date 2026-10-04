@@ -473,12 +473,13 @@ class TestEstorno:
     existia. Todo pedido migrado sem id inflava o saldo de forma permanente."""
 
     def test_estorno_devolve_mesmo_sem_id_no_pedido(self, admin, restaurante, entregador):
-        from pymongo import MongoClient
-
+        import asyncio
         import os
 
-        cliente = MongoClient(os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
-        base = cliente[os.environ.get("DB_NAME", "test_database")]
+        import asyncpg
+
+        if not os.environ.get("DATABASE_URL"):
+            pytest.skip("DATABASE_URL não definida — o teste precisa mexer no banco direto")
 
         pedido = admin.post(
             f"{API}/orders",
@@ -495,9 +496,18 @@ class TestEstorno:
         ).json()
 
         # Estado de um pedido migrado cujo nome não casou: só os nomes em texto.
-        base.orders.update_one(
-            {"id": pedido["id"]}, {"$set": {"driver_id": "", "restaurant_id": ""}}
-        )
+        # A API não deixa gravar esse estado, então ele é forçado no banco.
+        async def _tirar_ids():
+            con = await asyncpg.connect(os.environ["DATABASE_URL"], statement_cache_size=0)
+            try:
+                await con.execute(
+                    "UPDATE orders SET driver_id = '', restaurant_id = '' WHERE id = $1",
+                    pedido["id"],
+                )
+            finally:
+                await con.close()
+
+        asyncio.run(_tirar_ids())
 
         antes = admin.get(f"{API}/drivers/{entregador['id']}", timeout=TIMEOUT).json()
         for etapa in ("aguardando_coleta", "em_transito", "entregue"):
@@ -515,7 +525,6 @@ class TestEstorno:
         assert final["total_deliveries"] == antes["total_deliveries"]
 
         admin.delete(f"{API}/orders/{pedido['id']}", timeout=TIMEOUT)
-        cliente.close()
 
     def test_estorno_usa_o_valor_creditado_na_epoca(self, admin, restaurante, entregador):
         """Editar o valor do pedido entre a entrega e o estorno não pode fazer o

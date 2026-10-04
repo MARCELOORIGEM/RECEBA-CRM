@@ -25,8 +25,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import asyncpg
 
@@ -65,6 +66,21 @@ async def _preparar(con: asyncpg.Connection) -> None:
         )
 
 
+async def _devolver(con: asyncpg.Connection) -> None:
+    """O que roda quando a conexão volta ao pool: nada.
+
+    O padrão do asyncpg executa `SELECT pg_advisory_unlock_all(); CLOSE ALL;
+    UNLISTEN *; RESET ALL;` a cada devolução — uma ida ao banco a mais por
+    consulta. Com o Supabase a 380 ms daqui, isso dobrava o tempo de toda rota:
+    o evento de entrega do marketplace levava 8 s e estourava o timeout.
+
+    O CRM não usa nada que esse reset desfaz (SET de sessão, LISTEN, cursor,
+    advisory lock). E a parte que importa continua: antes de chamar esta
+    função, o pool já faz `ROLLBACK` sozinho se a conexão voltar com transação
+    aberta — sem custo quando não há.
+    """
+
+
 async def abrir() -> asyncpg.Pool:
     """Cria o pool. Chamado uma vez, no lifespan."""
     global _pool
@@ -78,12 +94,19 @@ async def abrir() -> asyncpg.Pool:
     _pool = await asyncpg.create_pool(
         url,
         min_size=int(os.environ.get("PG_POOL_MIN", "1")),
-        max_size=int(os.environ.get("PG_POOL_MAX", "10")),
+        # Por PROCESSO: com dois workers, a API abre até o dobro. O pooler do
+        # Supabase em modo sessão (porta 5432) aceita 15 clientes no total, e
+        # o que passa disso é recusado com EMAXCONNSESSION — a requisição fica
+        # esperando e cai por timeout. 2 workers x 5 = 10 deixa folga para o
+        # SQL Editor e para um script rodando ao lado. Suba só junto com o
+        # limite do plano (Database > Settings > Pool size).
+        max_size=int(os.environ.get("PG_POOL_MAX", "5")),
         # Conexão parada é derrubada pelo Supabase; reciclar antes evita o
         # primeiro uso do dia falhar com "connection was closed".
         max_inactive_connection_lifetime=300.0,
         command_timeout=30.0,
         init=_preparar,
+        reset=_devolver,
         statement_cache_size=0 if modo_transacao else 100,
     )
     logger.info(
@@ -152,6 +175,34 @@ async def proximo_numero(nome: str) -> int:
             nome,
         )
     )
+
+
+# ----------------------------------------------------------------- boot
+# Número arbitrário e fixo: identifica "o boot do Miliano" entre os advisory
+# locks do banco.
+_TRAVA_DO_BOOT = 7_311_904_552
+
+
+@asynccontextmanager
+async def trava_de_boot():
+    """Um processo por vez aplicando schema e seed.
+
+    O compose sobe a API com dois workers, e réplicas no Railway também sobem
+    juntas. Dois `CREATE TABLE IF NOT EXISTS` simultâneos num banco novo
+    colidem no catálogo do PostgreSQL (`pg_type_typname_nsp_index`) e um dos
+    processos morre no boot — o `IF NOT EXISTS` não cobre a corrida. Com a
+    trava, o segundo espera o primeiro terminar e encontra tudo pronto.
+
+    O lock é de TRANSAÇÃO (`pg_advisory_xact_lock`), preso a uma transação
+    aberta numa conexão separada enquanto o boot roda nas outras. Lock de
+    sessão não serviria no pooler em modo transação (porta 6543), que troca a
+    conexão de servidor a cada comando; a transação aberta a mantém fixa, e o
+    lock sai sozinho no fim dela — inclusive se o boot falhar no meio.
+    """
+    async with pool().acquire() as con:
+        async with con.transaction():
+            await con.execute("SELECT pg_advisory_xact_lock($1)", _TRAVA_DO_BOOT)
+            yield
 
 
 # --------------------------------------------------------------- schema

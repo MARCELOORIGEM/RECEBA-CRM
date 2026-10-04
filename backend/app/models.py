@@ -3,7 +3,7 @@
 A versão anterior aceitava `commission_rate: float` e `status: str` livres — a API
 gravava comissão -50% e status "voando" sem reclamar.
 """
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -197,7 +197,7 @@ class ActivityInput(BaseModel):
     type: ActivityType = "tarefa"
     title: Str1
     description: StrOpt = ""
-    due_at: Optional[str] = None
+    due_at: Optional[datetime] = None
     related_type: Optional[RelatedType] = None
     related_id: StrOpt = ""
     related_name: StrOpt = ""

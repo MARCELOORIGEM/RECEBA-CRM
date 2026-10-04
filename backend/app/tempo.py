@@ -59,10 +59,40 @@ def dia_local(offset_dias: int = 0) -> str:
     return (hoje_local() + timedelta(days=offset_dias)).isoformat()
 
 
-def campo_data(campo: str) -> dict:
-    """Converte o campo ISO em texto para data BSON, dentro de uma agregação.
+def data_do_filtro(texto: str) -> date | None:
+    """`YYYY-MM-DD` da query string, ou None quando vazio.
 
-    As datas são gravadas como string ISO; sem esta conversão o Mongo não sabe
-    aplicar fuso e o agrupamento por dia/hora sai em UTC.
+    No Mongo a data era texto e o filtro comparava texto com texto — uma data
+    torta simplesmente não casava nada. Aqui ela vira parâmetro tipado, e um
+    valor inválido precisa virar 422 legível, não um 500 do driver.
     """
-    return {"$dateFromString": {"dateString": f"${campo}", "onError": None, "onNull": None}}
+    texto = (texto or "").strip()
+    if not texto:
+        return None
+    try:
+        return date.fromisoformat(texto[:10])
+    except ValueError:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=422, detail=f"Data inválida: {texto!r}. Use AAAA-MM-DD.")
+
+
+def inicio_da_data(dia: date) -> datetime:
+    """Meia-noite local do dia informado, em UTC — limite inferior de filtro."""
+    return datetime.combine(dia, time.min, tzinfo=FUSO).astimezone(timezone.utc)
+
+
+def fim_da_data(dia: date) -> datetime:
+    """Último instante local do dia informado, em UTC — limite superior."""
+    return datetime.combine(dia, time.max, tzinfo=FUSO).astimezone(timezone.utc)
+
+
+def com_fuso(valor: datetime | None) -> datetime | None:
+    """Data sem fuso é lida como horário local do negócio.
+
+    O painel manda ISO com `Z`, mas um cliente de API que mande
+    "2026-10-04T15:00" quer dizer 15h em São Paulo, não 15h em UTC.
+    """
+    if valor is None or valor.tzinfo is not None:
+        return valor
+    return valor.replace(tzinfo=FUSO)

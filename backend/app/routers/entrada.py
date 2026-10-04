@@ -10,17 +10,15 @@ guardado no banco (o valor da chave nunca é armazenado).
 """
 import hashlib
 import uuid
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
+import asyncpg
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
-from typing import Annotated
 
-from .. import financials
-from ..db import db, next_sequence
+from .. import financials, pg, repo
 from ..rede import ip_do_cliente
-from ..repo import PROJECTION
-from ..security import now_iso
+from ..security import now_utc
 
 router = APIRouter(prefix="/integracoes", tags=["entrada de eventos"])
 
@@ -60,25 +58,24 @@ async def _autenticar(request: Request) -> dict:
         )
 
     bruta = cabecalho[7:].strip()
-    chave = await db.api_keys.find_one(
-        {"key_hash": hashlib.sha256(bruta.encode("utf-8")).hexdigest()}, PROJECTION
+    chave = await repo.um_por(
+        "api_keys", "key_hash", hashlib.sha256(bruta.encode("utf-8")).hexdigest()
     )
     if not chave:
         raise HTTPException(status_code=401, detail="Chave de API inválida")
 
-    await db.api_keys.update_one({"id": chave["id"]}, {"$set": {"last_used": now_iso()}})
+    await repo.atualizar("api_keys", chave["id"], {"last_used": now_utc()})
     return chave
 
 
 async def _registrar(provider: str, evento: str, codigo: int, ip: str, detalhe: str = "") -> None:
-    await db.webhook_logs.insert_one({
+    await repo.inserir("webhook_logs", {
         "id": str(uuid.uuid4()),
         "provider": provider,
         "event": evento,
         "status_code": codigo,
         "detalhe": detalhe,
         "ip": ip,
-        "created_at": now_iso(),
     })
 
 
@@ -92,7 +89,7 @@ async def receber_evento(provider: str, corpo: EventoPedido, request: Request) -
     # A referência é única POR provedor: dois marketplaces podem usar o mesmo
     # número sem colidir.
     externo = f"{provider}:{corpo.referencia}"
-    pedido = await db.orders.find_one({"external_ref": externo}, PROJECTION)
+    pedido = await repo.um_por("orders", "external_ref", externo)
 
     novo_status = STATUS_DO_EVENTO[corpo.evento]
 
@@ -107,10 +104,10 @@ async def receber_evento(provider: str, corpo: EventoPedido, request: Request) -
 
         restaurante = None
         if corpo.restaurante:
-            restaurante = await db.restaurants.find_one({"name": corpo.restaurante}, PROJECTION)
+            restaurante = await repo.um_por("restaurants", "name", corpo.restaurante)
 
-        seq = await next_sequence("order_code")
-        pedido = {
+        seq = await pg.proximo_numero("order_code")
+        novo = {
             "id": str(uuid.uuid4()),
             "code": f"PED-{1000 + seq}",
             "external_ref": externo,
@@ -126,25 +123,26 @@ async def receber_evento(provider: str, corpo: EventoPedido, request: Request) -
             "delivery_fee": corpo.taxa_entrega,
             "distance_km": corpo.distancia_km,
             "status": "criado",
-            "notes": "",
-            "financials_applied": False,
-            "driver_earning": 0.0,
-            "platform_commission": 0.0,
-            "delivered_at": None,
-            "created_at": now_iso(),
-            "updated_at": now_iso(),
             "created_by": f"Integração: {chave['name']}",
         }
-        await db.orders.insert_one(dict(pedido))
+        try:
+            pedido = await repo.inserir("orders", novo)
+        except asyncpg.UniqueViolationError:
+            # O marketplace reenvia o evento quando não recebe resposta a
+            # tempo, e às vezes os dois envios chegam juntos: os dois passam
+            # pela busca acima sem achar nada. O UNIQUE de `external_ref`
+            # barra o segundo; ele responde como o primeiro, sem duplicar.
+            pedido = await repo.um_por("orders", "external_ref", externo)
+            await _registrar(provider, corpo.evento, 202, ip, pedido["code"])
+            return {"pedido": pedido["code"], "status": pedido["status"], "criado": False}
         await _registrar(provider, corpo.evento, 202, ip, pedido["code"])
         return {"pedido": pedido["code"], "status": pedido["status"], "criado": True}
 
     # Pedido já existe: só muda o status, sem reescrever valores já lançados.
     if pedido["status"] != novo_status:
-        await db.orders.update_one(
-            {"id": pedido["id"]}, {"$set": {"status": novo_status, "updated_at": now_iso()}}
+        atual = await repo.atualizar(
+            "orders", pedido["id"], {"status": novo_status, "updated_at": now_utc()}
         )
-        atual = await db.orders.find_one({"id": pedido["id"]}, PROJECTION)
         # O motor financeiro é o mesmo usado pela tela: entrega lança repasse e
         # comissão, reversão estorna.
         if novo_status == "entregue":
@@ -153,5 +151,5 @@ async def receber_evento(provider: str, corpo: EventoPedido, request: Request) -
             await financials.revert_delivery(pedido)
 
     await _registrar(provider, corpo.evento, 202, ip, pedido["code"])
-    final = await db.orders.find_one({"id": pedido["id"]}, PROJECTION)
+    final = await repo.pegar("orders", pedido["id"])
     return {"pedido": final["code"], "status": final["status"], "criado": False}

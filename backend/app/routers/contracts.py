@@ -2,12 +2,11 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import audit
-from ..db import db
+from .. import audit, repo
 from ..deps import get_current_user, require_admin
 from ..models import ContractInput
-from ..repo import PROJECTION, get_or_404, paginate
-from ..security import now_iso
+from ..repo import get_or_404
+from ..security import now_utc
 
 router = APIRouter(prefix="/contracts", tags=["contratos"])
 
@@ -16,14 +15,13 @@ COLLECTION = {"restaurante": "restaurants", "entregador": "drivers"}
 
 async def _link_party(data: dict) -> dict:
     """Amarra o contrato ao cadastro por id, não só pelo nome digitado."""
-    coll = COLLECTION[data["party_type"]]
-    party = None
+    tabela = COLLECTION[data["party_type"]]
     if data.get("party_id"):
-        party = await db[coll].find_one({"id": data["party_id"]}, PROJECTION)
+        party = await repo.pegar(tabela, data["party_id"])
         if not party:
             raise HTTPException(status_code=404, detail="Parte do contrato não encontrada")
     else:
-        party = await db[coll].find_one({"name": data["party_name"]}, PROJECTION)
+        party = await repo.um_por(tabela, "name", data["party_name"])
     if party:
         data["party_id"] = party["id"]
         data["party_name"] = party["name"]
@@ -38,12 +36,12 @@ async def list_contracts(
     page_size: int = 50,
     user: dict = Depends(get_current_user),
 ):
-    query: dict = {}
+    f = repo.filtro("contracts")
     if party_type != "todos":
-        query["party_type"] = party_type
+        f.igual("party_type", party_type)
     if status != "todos":
-        query["status"] = status
-    return await paginate("contracts", query, page=page, page_size=page_size)
+        f.igual("status", status)
+    return await repo.paginar("contracts", f, page=page, page_size=page_size)
 
 
 @router.get("/{cid}")
@@ -55,28 +53,32 @@ async def get_contract(cid: str, user: dict = Depends(get_current_user)):
 async def create_contract(data: ContractInput, user: dict = Depends(get_current_user)):
     doc = await _link_party(data.model_dump())
     if doc["status"] == "ativo":
-        clash = await db.contracts.find_one(
-            {"party_type": doc["party_type"], "party_name": doc["party_name"], "status": "ativo"}
+        clash = await repo.contar(
+            "contracts",
+            repo.filtro("contracts")
+            .igual("party_type", doc["party_type"])
+            .igual("party_name", doc["party_name"])
+            .igual("status", "ativo"),
         )
         if clash:
             raise HTTPException(
                 status_code=409,
                 detail="Já existe contrato ativo para esta parte. Encerre o atual antes de criar outro.",
             )
-    doc.update({"id": str(uuid.uuid4()), "created_at": now_iso(), "updated_at": now_iso(),
-                "created_by": user["name"]})
-    await db.contracts.insert_one(dict(doc))
-    await audit.record(user, "criou", "contrato", doc["id"], label=doc["party_name"], after=doc)
-    return await get_or_404("contracts", doc["id"], "Contrato")
+    doc.update({"id": str(uuid.uuid4()), "created_by": user["name"]})
+    criado = await repo.inserir("contracts", doc)
+    await audit.record(
+        user, "criou", "contrato", criado["id"], label=criado["party_name"], after=criado
+    )
+    return criado
 
 
 @router.put("/{cid}")
 async def update_contract(cid: str, data: ContractInput, user: dict = Depends(get_current_user)):
     before = await get_or_404("contracts", cid, "Contrato")
     patch = await _link_party(data.model_dump())
-    patch["updated_at"] = now_iso()
-    await db.contracts.update_one({"id": cid}, {"$set": patch})
-    after = await db.contracts.find_one({"id": cid}, PROJECTION)
+    patch["updated_at"] = now_utc()
+    after = await repo.atualizar("contracts", cid, patch)
     await audit.record(
         user, "atualizou", "contrato", cid, label=after["party_name"], before=before, after=after
     )
@@ -86,6 +88,6 @@ async def update_contract(cid: str, data: ContractInput, user: dict = Depends(ge
 @router.delete("/{cid}")
 async def delete_contract(cid: str, admin: dict = Depends(require_admin)):
     doc = await get_or_404("contracts", cid, "Contrato")
-    await db.contracts.delete_one({"id": cid})
+    await repo.remover("contracts", cid)
     await audit.record(admin, "removeu", "contrato", cid, label=doc["party_name"], before=doc)
     return {"message": "Removido"}

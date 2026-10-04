@@ -24,8 +24,8 @@ def _bool(name: str, default: bool) -> bool:
 
 class Settings:
     def __init__(self) -> None:
-        self.mongo_url = os.environ["MONGO_URL"]
-        self.db_name = os.environ["DB_NAME"]
+        # A conexão com o banco (DATABASE_URL) é lida em `pg.py`, que explica
+        # os detalhes da URI do Supabase.
         self.jwt_secret = os.environ["JWT_SECRET"]
         self.jwt_algorithm = "HS256"
         self.access_ttl_minutes = int(os.environ.get("ACCESS_TTL_MINUTES", "60"))

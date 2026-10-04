@@ -2,16 +2,15 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import asyncpg
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pymongo.errors import DuplicateKeyError, PyMongoError
 from starlette.middleware.cors import CORSMiddleware
 
-from . import seed
+from . import pg, seed
 from .config import settings
-from .db import client, ensure_indexes
 from .observabilidade import configurar_logs, iniciar_sentry, middleware_requisicao
 from .routers import (
     activities,
@@ -41,16 +40,23 @@ logger = logging.getLogger("miliano")
 async def lifespan(app: FastAPI):
     # `@app.on_event` está descontinuado no FastAPI; lifespan é o substituto.
     iniciar_sentry()
-    await ensure_indexes()
-    await seed.run()
+    await pg.abrir()
+    # Idempotente, como era o ensure_indexes(): numa base nova cria tudo, numa
+    # base existente não muda nada. Sob a trava, para que vários workers
+    # subindo juntos não disputem a criação das mesmas tabelas.
+    async with pg.trava_de_boot():
+        await pg.aplicar_schema()
+        await seed.run()
+    banco = await pg.conferir()
     logger.info(
-        "API pronta — banco %s, ambiente %s, dados de exemplo %s",
-        settings.db_name,
+        "API pronta — PostgreSQL %s (%s tabelas), ambiente %s, dados de exemplo %s",
+        banco["versao"],
+        banco["tabelas"],
         settings.ambiente,
         "ligados" if settings.seed_demo else "desligados",
     )
     yield
-    client.close()
+    await pg.fechar()
 
 
 app = FastAPI(
@@ -93,13 +99,28 @@ async def validation_handler(request: Request, exc: RequestValidationError):
     return JSONResponse(status_code=422, content={"detail": " | ".join(partes) or "Dados inválidos"})
 
 
-@app.exception_handler(DuplicateKeyError)
-async def duplicate_handler(request: Request, exc: DuplicateKeyError):
+@app.exception_handler(asyncpg.UniqueViolationError)
+async def duplicate_handler(request: Request, exc: asyncpg.UniqueViolationError):
     return JSONResponse(status_code=409, content={"detail": "Registro duplicado"})
 
 
-@app.exception_handler(PyMongoError)
-async def mongo_handler(request: Request, exc: PyMongoError):
+@app.exception_handler(asyncpg.CheckViolationError)
+async def check_handler(request: Request, exc: asyncpg.CheckViolationError):
+    """Valor que passou pelo Pydantic mas o schema recusa.
+
+    Não deveria acontecer — a validação na borda espelha os CHECK —, então é
+    registrado como erro: o dia em que aparecer, as duas listas divergiram.
+    """
+    logger.error("CHECK recusou gravação em %s %s: %s", request.method, request.url.path,
+                 exc.constraint_name)
+    return JSONResponse(status_code=422, content={"detail": "Valor fora do permitido"})
+
+
+@app.exception_handler(asyncpg.PostgresConnectionError)
+@app.exception_handler(asyncpg.InterfaceError)
+@app.exception_handler(ConnectionError)
+@app.exception_handler(TimeoutError)
+async def banco_fora_handler(request: Request, exc: Exception):
     logger.exception("Falha no banco em %s %s", request.method, request.url.path)
     return JSONResponse(
         status_code=503, content={"detail": "Banco de dados indisponível. Tente novamente."}

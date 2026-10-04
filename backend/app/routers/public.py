@@ -7,15 +7,15 @@ qualquer chave que o cliente invente.
 """
 import uuid
 from datetime import timedelta
-from typing import Any
+from typing import Any, get_args
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .. import repo
 from ..config import settings
-from ..db import db
+from ..models import LeadSource
 from ..rede import ip_do_cliente
-from ..repo import PROJECTION
 from ..security import now_iso, now_utc
 from .forms import CAMPOS_DO_DESTINO, COLECAO_DO_DESTINO
 
@@ -43,7 +43,7 @@ class Envio(BaseModel):
 async def ver_formulario(slug: str):
     """Só o necessário para desenhar o formulário — nada de contadores,
     autor, destino ou datas internas."""
-    form = await db.forms.find_one({"slug": slug}, PROJECTION)
+    form = await repo.um_por("forms", "slug", slug)
     if not form:
         raise HTTPException(status_code=404, detail="Formulário não encontrado")
     if not form.get("active", True):
@@ -127,14 +127,44 @@ def _validar(campo: dict, bruto: Any) -> Any:
     return texto
 
 
+ORIGENS = set(get_args(LeadSource))
+
+
+def _origem(valor: Any) -> str:
+    texto = str(valor or "").strip().lower()
+    if not texto:
+        return "site"
+    return texto if texto in ORIGENS else "outro"
+
+
+def _numero(valor: Any) -> float:
+    """Valor estimado digitado à mão: "abc" vira 0, não um erro 500."""
+    try:
+        return max(0.0, float(valor or 0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _para_coluna(chave: str, valor: Any) -> Any:
+    """Ajusta o tipo ao da coluna de destino.
+
+    No Mongo, um campo do tipo "número" apontado para `phone` gravava um float
+    no documento e ninguém reclamava. No Postgres a coluna é TEXT e o driver
+    recusa o float — o envio do formulário inteiro cairia num 500. Só
+    `estimated_value` é numérica; todo o resto é texto.
+    """
+    if chave == "estimated_value" or isinstance(valor, str):
+        return valor
+    if isinstance(valor, float) and valor.is_integer():
+        return str(int(valor))
+    return str(valor)
+
+
 async def _criar_cadastro(form: dict, valores: dict, extras: dict) -> dict:
     """Monta o registro no destino escolhido pelo formulário."""
     destino = form["target"]
-    agora = now_iso()
     base = {
         "id": str(uuid.uuid4()),
-        "created_at": agora,
-        "updated_at": agora,
         "created_by": f"Formulário: {form['title']}",
         # Marca a procedência: um cadastro vindo da rua não é igual a um
         # cadastro conferido pela equipe.
@@ -153,13 +183,13 @@ async def _criar_cadastro(form: dict, valores: dict, extras: dict) -> dict:
             "contact_name": valores.get("contact_name", ""),
             "city": valores.get("city", ""),
             "category": valores.get("category", ""),
-            "source": valores.get("source") or "site",
+            # O banco só aceita as origens da lista; texto livre vira "outro".
+            "source": _origem(valores.get("source")),
             "stage": "novo",
-            "estimated_value": float(valores.get("estimated_value") or 0),
+            "estimated_value": _numero(valores.get("estimated_value")),
             "owner_name": "",
             "lost_reason": "",
-            "stage_history": [{"stage": "novo", "at": agora, "by": "formulário"}],
-            "converted_restaurant_id": None,
+            "stage_history": [{"stage": "novo", "at": now_iso(), "by": "formulário"}],
         }
     elif destino == "restaurante":
         doc = {
@@ -171,9 +201,6 @@ async def _criar_cadastro(form: dict, valores: dict, extras: dict) -> dict:
             "commission_rate": 15.0,
             # Nunca entra ativo: quem chega pelo formulário passa por conferência.
             "status": "em_analise",
-            "orders_total": 0,
-            "revenue_total": 0.0,
-            "commission_due": 0.0,
         }
     else:
         doc = {
@@ -183,9 +210,6 @@ async def _criar_cadastro(form: dict, valores: dict, extras: dict) -> dict:
             "status": "offline",
             "rating": 5.0,
             "photo": "",
-            "total_deliveries": 0,
-            "balance_due": 0.0,
-            "paid_total": 0.0,
             # Dados de pagamento vindos do formulário de recrutamento.
             "cpf": "".join(c for c in str(valores.get("cpf") or "") if c.isdigit()),
             "bank": valores.get("bank", ""),
@@ -196,13 +220,12 @@ async def _criar_cadastro(form: dict, valores: dict, extras: dict) -> dict:
             "pix_key": valores.get("pix_key", ""),
         }
 
-    await db[COLECAO_DO_DESTINO[destino]].insert_one(dict(doc))
-    return doc
+    return await repo.inserir(COLECAO_DO_DESTINO[destino], doc)
 
 
 @router.post("/forms/{slug}", status_code=201)
 async def responder_formulario(slug: str, envio: Envio, request: Request):
-    form = await db.forms.find_one({"slug": slug}, PROJECTION)
+    form = await repo.um_por("forms", "slug", slug)
     if not form:
         raise HTTPException(status_code=404, detail="Formulário não encontrado")
     if not form.get("active", True):
@@ -212,7 +235,10 @@ async def responder_formulario(slug: str, envio: Envio, request: Request):
 
     ip = ip_do_cliente(request)
     desde = now_utc() - timedelta(minutes=JANELA_MINUTOS)
-    recentes = await db.form_submissions.count_documents({"ip": ip, "created_at_dt": {"$gte": desde}})
+    recentes = await repo.contar(
+        "form_submissions",
+        repo.filtro("form_submissions").igual("ip", ip).desde("created_at", desde),
+    )
     if recentes >= MAX_ENVIOS_POR_IP:
         raise HTTPException(
             status_code=429,
@@ -237,7 +263,7 @@ async def responder_formulario(slug: str, envio: Envio, request: Request):
     for campo in form.get("fields", []):
         valor = _validar(campo, respostas.get(campo["key"]))
         if campo["key"] in conhecidos:
-            valores[campo["key"]] = valor
+            valores[campo["key"]] = _para_coluna(campo["key"], valor)
         elif valor != "":
             extras[campo["label"] or campo["key"]] = valor
 
@@ -251,7 +277,7 @@ async def responder_formulario(slug: str, envio: Envio, request: Request):
         "em": now_iso(),
     }
 
-    await db.form_submissions.insert_one({
+    await repo.inserir("form_submissions", {
         "id": str(uuid.uuid4()),
         "form_id": form["id"],
         "form_title": form["title"],
@@ -261,12 +287,8 @@ async def responder_formulario(slug: str, envio: Envio, request: Request):
         "answers": {**valores, **extras},
         "consentimento": consentimento,
         "ip": ip,
-        "created_at": now_iso(),
-        # Campo de data para a contagem por IP e para o índice TTL do Mongo,
-        # que só expira campo BSON Date.
-        "created_at_dt": now_utc(),
     })
-    await db.forms.update_one({"id": form["id"]}, {"$inc": {"submissions_count": 1}})
+    await repo.incrementar("forms", form["id"], {"submissions_count": 1})
 
     return {
         "message": form.get("success_message") or "Cadastro recebido! Em breve entramos em contato.",

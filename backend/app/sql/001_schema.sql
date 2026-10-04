@@ -286,7 +286,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     entity      TEXT NOT NULL,
     entity_id   TEXT NOT NULL DEFAULT '',
     label       TEXT NOT NULL DEFAULT '',
-    changes     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    changes     JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

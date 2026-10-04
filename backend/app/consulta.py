@@ -72,18 +72,22 @@ def coluna(tabela: str, nome: str) -> str:
 class Filtro:
     """Condições de um WHERE, acumuladas e combinadas com AND."""
 
-    def __init__(self, tabela: str) -> None:
+    def __init__(self, tabela: str, *, primeiro_parametro: int = 1) -> None:
+        """`primeiro_parametro` desloca a numeração: com 4, o primeiro valor
+        vira `$4`. Serve para juntar vários filtros num mesmo comando — os
+        contadores da agenda saem todos de um SELECT só."""
         if tabela not in COLUNAS:
             raise ColunaInvalida(f"tabela desconhecida: {tabela}")
         self.tabela = tabela
         self._cond: list[str] = []
         self._args: list[object] = []
+        self._base = primeiro_parametro - 1
 
     # -- internos ---------------------------------------------------------
     def _marcador(self, valor: object) -> str:
         """Guarda o valor e devolve o `$n` que o representa."""
         self._args.append(valor)
-        return f"${len(self._args)}"
+        return f"${len(self._args) + self._base}"
 
     def _col(self, nome: str) -> str:
         return coluna(self.tabela, nome)

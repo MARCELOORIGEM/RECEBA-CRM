@@ -1,63 +1,61 @@
-from bson import ObjectId
-from bson.errors import InvalidId
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 
-from .. import audit
-from ..db import db
+from .. import audit, pg, repo
 from ..deps import require_admin
 from ..models import UserCreate, UserUpdate
-from ..security import hash_password, now_iso
+from ..security import hash_password, now_utc
 
 router = APIRouter(prefix="/users", tags=["usuários"])
 
-SAFE = {"password_hash": 0}
-
-
-def _oid(uid: str) -> ObjectId:
-    try:
-        return ObjectId(uid)
-    except InvalidId:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado")
-
 
 def _public(u: dict) -> dict:
-    u["id"] = str(u.pop("_id"))
-    u.setdefault("active", True)
-    return u
+    """Sem o hash da senha: esta lista vai inteira para o navegador."""
+    return {k: v for k, v in u.items() if k != "password_hash"}
+
+
+async def _outros_admins_ativos(uid: str) -> int:
+    return int(await pg.valor(
+        "SELECT count(*) FROM users WHERE role = 'admin' AND active AND id <> $1", uid
+    ) or 0)
+
+
+async def _get_or_404(uid: str) -> dict:
+    # Um id que não existe é 404, como antes. No Mongo, um id fora do formato
+    # de ObjectId precisava de tratamento à parte; aqui é só texto que não casa.
+    doc = await repo.pegar("users", uid)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    return doc
 
 
 @router.get("")
 async def list_users(admin: dict = Depends(require_admin)):
-    users = await db.users.find({}, SAFE).sort("created_at", 1).to_list(500)
-    return [_public(u) for u in users]
+    usuarios = await repo.listar("users", ordenar_por="created_at", direcao="asc", limite=500)
+    return [_public(u) for u in usuarios]
 
 
 @router.post("", status_code=201)
 async def create_user(data: UserCreate, admin: dict = Depends(require_admin)):
     email = data.email.lower()
-    if await db.users.find_one({"email": email}):
+    if await repo.existe("users", "email", email):
         raise HTTPException(status_code=400, detail="E-mail já cadastrado")
-    doc = {
+    criado = await repo.inserir("users", {
+        "id": str(uuid.uuid4()),
         "name": data.name,
         "email": email,
         "password_hash": hash_password(data.password),
         "role": data.role,
         "active": True,
-        "created_at": now_iso(),
-    }
-    res = await db.users.insert_one(doc)
-    uid = str(res.inserted_id)
-    await audit.record(admin, "criou", "usuário", uid, label=email)
-    return {"id": uid, "name": data.name, "email": email, "role": data.role,
-            "active": True, "created_at": doc["created_at"]}
+    })
+    await audit.record(admin, "criou", "usuário", criado["id"], label=email)
+    return _public(criado)
 
 
 @router.put("/{uid}")
 async def update_user(uid: str, data: UserUpdate, admin: dict = Depends(require_admin)):
-    oid = _oid(uid)
-    before = await db.users.find_one({"_id": oid}, SAFE)
-    if not before:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    before = await _get_or_404(uid)
 
     update: dict = {}
     if data.name is not None:
@@ -75,39 +73,28 @@ async def update_user(uid: str, data: UserUpdate, admin: dict = Depends(require_
         raise HTTPException(
             status_code=400, detail="Você não pode remover o próprio acesso de administrador"
         )
-    if before.get("role") == "admin" and perde_admin:
-        outros = await db.users.count_documents(
-            {"role": "admin", "active": {"$ne": False}, "_id": {"$ne": oid}}
+    if before.get("role") == "admin" and perde_admin and await _outros_admins_ativos(uid) == 0:
+        raise HTTPException(
+            status_code=400, detail="É preciso manter ao menos um administrador ativo"
         )
-        if outros == 0:
-            raise HTTPException(
-                status_code=400, detail="É preciso manter ao menos um administrador ativo"
-            )
 
     if update:
-        await db.users.update_one({"_id": oid}, {"$set": update})
-    after = await db.users.find_one({"_id": oid}, SAFE)
+        update["updated_at"] = now_utc()
+    after = await repo.atualizar("users", uid, update)
     await audit.record(admin, "atualizou", "usuário", uid, label=after["email"],
-                       before=dict(before), after=dict(after))
+                       before=_public(before), after=_public(after))
     return _public(after)
 
 
 @router.delete("/{uid}")
 async def delete_user(uid: str, admin: dict = Depends(require_admin)):
-    oid = _oid(uid)
     if uid == admin["id"]:
         raise HTTPException(status_code=400, detail="Você não pode remover sua própria conta")
-    doc = await db.users.find_one({"_id": oid}, SAFE)
-    if not doc:
-        raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    if doc.get("role") == "admin":
-        outros = await db.users.count_documents(
-            {"role": "admin", "active": {"$ne": False}, "_id": {"$ne": oid}}
+    doc = await _get_or_404(uid)
+    if doc.get("role") == "admin" and await _outros_admins_ativos(uid) == 0:
+        raise HTTPException(
+            status_code=400, detail="É preciso manter ao menos um administrador ativo"
         )
-        if outros == 0:
-            raise HTTPException(
-                status_code=400, detail="É preciso manter ao menos um administrador ativo"
-            )
-    await db.users.delete_one({"_id": oid})
+    await repo.remover("users", uid)
     await audit.record(admin, "removeu", "usuário", uid, label=doc["email"])
     return {"message": "Removido"}

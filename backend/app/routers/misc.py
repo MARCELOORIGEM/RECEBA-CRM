@@ -1,18 +1,33 @@
 """Busca global, timeline por cadastro, auditoria e saúde da API."""
+import asyncio
+
 from fastapi import APIRouter, Depends, Query
 
-from ..db import db
+from .. import pg, repo
 from ..deps import get_current_user, require_admin
-from ..repo import PROJECTION, paginate, regex_filter
 
 router = APIRouter(tags=["geral"])
+
+# (tabela, colunas pesquisadas, tipo, campo do título, campos do subtítulo, rota)
+ALVOS_DA_BUSCA = [
+    ("restaurants", ["name", "cnpj", "contact_person", "phone"],
+     "Restaurante", "name", ["category", "status"], "/restaurantes"),
+    ("drivers", ["name", "plate", "phone"],
+     "Entregador", "name", ["vehicle_type", "status"], "/entregadores"),
+    ("orders", ["code", "customer_name", "restaurant_name"],
+     "Pedido", "code", ["restaurant_name", "customer_name"], "/pedidos"),
+    ("leads", ["name", "contact_name", "city"],
+     "Lead", "name", ["city", "stage"], "/funil"),
+    ("payments", ["creditor"],
+     "Pagamento", "creditor", ["status", "due_date"], "/contratos-pagamentos"),
+]
 
 
 @router.get("/health")
 async def health():
     """Ping sem autenticação, para load balancer e monitoramento."""
     try:
-        await db.command("ping")
+        await pg.valor("SELECT 1")
         return {"status": "ok", "database": "up"}
     except Exception:
         return {"status": "degraded", "database": "down"}
@@ -25,42 +40,43 @@ async def global_search(q: str = Query("", min_length=0), user: dict = Depends(g
     if len(term) < 2:
         return {"results": []}
 
-    results: list[dict] = []
+    # As cinco tabelas em paralelo: em sequência, a 200 ms cada, o atalho de
+    # busca levaria um segundo para responder a cada tecla.
+    achados = await asyncio.gather(*(
+        repo.listar(tabela, repo.filtro(tabela).busca(term, campos), limite=5)
+        for tabela, campos, *_ in ALVOS_DA_BUSCA
+    ))
 
-    async def collect(collection, fields, tipo, label_field, sub, rota):
-        docs = await db[collection].find(regex_filter(term, fields), PROJECTION).limit(5).to_list(5)
+    results: list[dict] = []
+    for (_, _, tipo, titulo, sub, rota), docs in zip(ALVOS_DA_BUSCA, achados):
         for d in docs:
             results.append({
                 "tipo": tipo,
                 "id": d["id"],
-                "titulo": d.get(label_field, ""),
+                "titulo": d.get(titulo, ""),
                 "subtitulo": " • ".join(str(d.get(f, "")) for f in sub if d.get(f)),
                 "rota": rota,
             })
-
-    await collect("restaurants", ["name", "cnpj", "contact_person", "phone"],
-                  "Restaurante", "name", ["category", "status"], "/restaurantes")
-    await collect("drivers", ["name", "plate", "phone"],
-                  "Entregador", "name", ["vehicle_type", "status"], "/entregadores")
-    await collect("orders", ["code", "customer_name", "restaurant_name"],
-                  "Pedido", "code", ["restaurant_name", "customer_name"], "/pedidos")
-    await collect("leads", ["name", "contact_name", "city"],
-                  "Lead", "name", ["city", "stage"], "/funil")
-    await collect("payments", ["creditor"],
-                  "Pagamento", "creditor", ["status", "due_date"], "/contratos-pagamentos")
     return {"results": results}
 
 
 @router.get("/timeline/{entity_type}/{entity_id}")
 async def timeline(entity_type: str, entity_id: str, user: dict = Depends(get_current_user)):
     """Linha do tempo de um cadastro: interações, tarefas e alterações."""
-    atividades = await db.activities.find(
-        {"related_type": entity_type, "related_id": entity_id}, PROJECTION
-    ).sort("created_at", -1).to_list(100)
-
-    logs = await db.audit_logs.find(
-        {"entity_id": entity_id}, PROJECTION
-    ).sort("created_at", -1).to_list(50)
+    atividades, logs = await asyncio.gather(
+        repo.listar(
+            "activities",
+            repo.filtro("activities")
+            .igual("related_type", entity_type, ignorar_vazio=False)
+            .igual("related_id", entity_id, ignorar_vazio=False),
+            limite=100,
+        ),
+        repo.listar(
+            "audit_logs",
+            repo.filtro("audit_logs").igual("entity_id", entity_id, ignorar_vazio=False),
+            limite=50,
+        ),
+    )
 
     eventos = [
         {"at": a["created_at"], "origem": "atividade", "tipo": a.get("type"),
@@ -85,9 +101,8 @@ async def audit_log(
     page_size: int = 50,
     admin: dict = Depends(require_admin),
 ):
-    query: dict = {}
+    f = repo.filtro("audit_logs")
     if entity != "todos":
-        query["entity"] = entity
-    if actor_id:
-        query["actor_id"] = actor_id
-    return await paginate("audit_logs", query, page=page, page_size=page_size)
+        f.igual("entity", entity)
+    f.igual("actor_id", actor_id)
+    return await repo.paginar("audit_logs", f, page=page, page_size=page_size)

@@ -13,13 +13,12 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from .. import audit
-from ..db import db
+from .. import audit, pg, repo
 from ..deps import get_current_user, require_admin
 from ..form_templates import MODELOS
 from ..models import FormInput, FormPatch
-from ..repo import PROJECTION, get_or_404, paginate
-from ..security import now_iso
+from ..repo import get_or_404
+from ..security import now_utc
 
 router = APIRouter(prefix="/forms", tags=["formulários"])
 
@@ -61,7 +60,7 @@ async def slug_livre(base: str, ignorar_id: str = "") -> str:
     """Garante unicidade sem estourar erro na cara do usuário."""
     candidato, n = base, 2
     while True:
-        existente = await db.forms.find_one({"slug": candidato})
+        existente = await repo.um_por("forms", "slug", candidato)
         if not existente or existente.get("id") == ignorar_id:
             return candidato
         candidato = f"{base}-{n}"
@@ -83,7 +82,7 @@ async def list_templates(user: dict = Depends(get_current_user)):
 async def list_forms(
     page: int = 1, page_size: int = 50, user: dict = Depends(get_current_user)
 ):
-    return await paginate("forms", {}, page=page, page_size=page_size)
+    return await repo.paginar("forms", page=page, page_size=page_size)
 
 
 @router.get("/{fid}")
@@ -96,8 +95,9 @@ async def list_submissions(
     fid: str, page: int = 1, page_size: int = 50, user: dict = Depends(get_current_user)
 ):
     await get_or_404("forms", fid, "Formulário")
-    return await paginate(
-        "form_submissions", {"form_id": fid}, page=page, page_size=page_size
+    return await repo.paginar(
+        "form_submissions", repo.filtro("form_submissions").igual("form_id", fid),
+        page=page, page_size=page_size,
     )
 
 
@@ -114,14 +114,19 @@ async def delete_submission(fid: str, sid: str, admin: dict = Depends(require_ad
     um na sua tela, e a auditoria registra as duas ações.
     """
     await get_or_404("forms", fid, "Formulário")
-    resposta = await db.form_submissions.find_one({"id": sid, "form_id": fid}, PROJECTION)
+    # O DELETE devolve a linha apagada: lê e remove num passo só, e a
+    # condição em `form_id` impede apagar resposta de outro formulário.
+    resposta = await pg.um(
+        "DELETE FROM form_submissions WHERE id = $1 AND form_id = $2 RETURNING *", sid, fid
+    )
     if not resposta:
         raise HTTPException(status_code=404, detail="Resposta não encontrada")
 
-    await db.form_submissions.delete_one({"id": sid, "form_id": fid})
     # O contador do formulário acompanha, sem descer abaixo de zero.
-    await db.forms.update_one(
-        {"id": fid, "submissions_count": {"$gt": 0}}, {"$inc": {"submissions_count": -1}}
+    await pg.executar(
+        "UPDATE forms SET submissions_count = submissions_count - 1 "
+        "WHERE id = $1 AND submissions_count > 0",
+        fid,
     )
     await audit.record(
         admin, "removeu resposta de", "formulário", fid,
@@ -147,14 +152,12 @@ async def create_form(data: FormInput, user: dict = Depends(get_current_user)):
     doc.update({
         "id": str(uuid.uuid4()),
         "slug": await slug_livre(gerar_slug(data.title)),
-        "submissions_count": 0,
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
         "created_by": user["name"],
     })
-    await db.forms.insert_one(dict(doc))
-    await audit.record(user, "criou", "formulário", doc["id"], label=doc["title"], after=doc)
-    return await get_or_404("forms", doc["id"], "Formulário")
+    criado = await repo.inserir("forms", doc)
+    await audit.record(user, "criou", "formulário", criado["id"], label=criado["title"],
+                       after=criado)
+    return criado
 
 
 @router.put("/{fid}")
@@ -165,9 +168,8 @@ async def update_form(fid: str, data: FormInput, user: dict = Depends(get_curren
     # O slug é o link que já foi distribuído: mudar o título não pode quebrar
     # o endereço que está no WhatsApp de dezenas de pessoas.
     patch["slug"] = before["slug"]
-    patch["updated_at"] = now_iso()
-    await db.forms.update_one({"id": fid}, {"$set": patch})
-    after = await db.forms.find_one({"id": fid}, PROJECTION)
+    patch["updated_at"] = now_utc()
+    after = await repo.atualizar("forms", fid, patch)
     await audit.record(
         user, "atualizou", "formulário", fid, label=after["title"], before=before, after=after
     )
@@ -177,10 +179,7 @@ async def update_form(fid: str, data: FormInput, user: dict = Depends(get_curren
 @router.patch("/{fid}/active")
 async def toggle_active(fid: str, body: FormPatch, user: dict = Depends(get_current_user)):
     await get_or_404("forms", fid, "Formulário")
-    await db.forms.update_one(
-        {"id": fid}, {"$set": {"active": body.active, "updated_at": now_iso()}}
-    )
-    return await db.forms.find_one({"id": fid}, PROJECTION)
+    return await repo.atualizar("forms", fid, {"active": body.active, "updated_at": now_utc()})
 
 
 @router.delete("/{fid}")
@@ -197,9 +196,9 @@ async def delete_form(
                 "ou confirme a exclusão definitiva."
             ),
         )
-    await db.forms.delete_one({"id": fid})
-    # As respostas são o histórico DESTE formulário: sem ele, viram órfãs.
-    # Os cadastros já gerados continuam no CRM, que é onde eles importam.
-    await db.form_submissions.delete_many({"form_id": fid})
+    # As respostas são o histórico DESTE formulário: sem ele, viram órfãs, e
+    # saem junto pelo ON DELETE CASCADE da chave estrangeira. Os cadastros já
+    # gerados continuam no CRM, que é onde eles importam.
+    await repo.remover("forms", fid)
     await audit.record(admin, "removeu", "formulário", fid, label=doc["title"], before=doc)
     return {"message": "Removido"}

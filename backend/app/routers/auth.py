@@ -6,7 +6,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 
 from .. import audit, pg, repo
 from ..config import settings
-from ..consulta import Filtro
 from ..deps import get_current_user
 from ..models import LoginInput, PasswordChange, ProfileUpdate, RegisterInput
 from ..rede import ip_do_cliente
