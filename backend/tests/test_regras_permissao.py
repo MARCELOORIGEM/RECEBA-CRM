@@ -58,3 +58,28 @@ def test_regras(user, dep, metodo, esperado):
 def test_modulos_sempre_na_ordem_do_menu():
     assert modulos_de(_gestor("integracoes", "pedidos")) == ["pedidos", "integracoes"]
     assert modulos_de({"role": "admin"}) == list(MODULOS)
+
+
+def test_corte_de_sessao_no_mesmo_segundo():
+    """Login e troca de senha no mesmo segundo: a sessão antiga tem de cair.
+
+    Com o `iat` inteiro do JWT os dois empatavam e ela sobrevivia — passou
+    despercebido aqui (banco a 380 ms separa os dois) e quebrou no CI.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from app.deps import sessao_cortada
+
+    login = datetime(2026, 10, 4, 21, 0, 0, 100_000, tzinfo=timezone.utc)
+    troca = login + timedelta(milliseconds=300)
+    novo_login = troca + timedelta(milliseconds=200)
+    user = {"sessoes_desde": troca}
+
+    antigo = {"iat": int(login.timestamp()), "emitido_em": login.timestamp()}
+    novo = {"iat": int(novo_login.timestamp()), "emitido_em": novo_login.timestamp()}
+    assert sessao_cortada(user, antigo)
+    assert not sessao_cortada(user, novo)
+    # Token de antes do `emitido_em` existir: na dúvida, derruba.
+    assert sessao_cortada(user, {"iat": int(login.timestamp())})
+    # Sem corte gravado, nada cai.
+    assert not sessao_cortada({"sessoes_desde": None}, antigo)

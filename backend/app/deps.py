@@ -17,10 +17,19 @@ def sessao_cortada(user: dict, payload: dict) -> bool:
     O corte é gravado quando a senha muda ou o administrador altera o acesso.
     Sem ele, trocar a senha de uma conta vazada não adiantaria nada por até
     sete dias: o token de quem já estava dentro continuaria valendo.
-    Comparação em segundos inteiros, que é a precisão do `iat` no JWT.
+
+    Compara com fração de segundo (`emitido_em`). Token sem esse campo —
+    emitido antes dele existir — cai no `iat` inteiro, arredondado para cima
+    a favor de derrubar: na dúvida, a sessão antiga não passa.
     """
     corte = user.get("sessoes_desde")
-    return bool(corte) and int(payload.get("iat") or 0) < int(corte.timestamp())
+    if not corte:
+        return False
+    emitido = payload.get("emitido_em")
+    if emitido is None:
+        emitido = float(payload.get("iat") or 0)
+        return emitido <= corte.timestamp()
+    return float(emitido) < corte.timestamp()
 
 
 async def get_current_user(request: Request) -> dict:
