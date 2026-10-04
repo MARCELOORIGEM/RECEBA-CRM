@@ -1,10 +1,8 @@
 """Dependências de autenticação e autorização."""
 import jwt
-from bson import ObjectId
-from bson.errors import InvalidId
 from fastapi import Depends, HTTPException, Request
 
-from .db import db
+from . import repo
 from .security import decode_token
 
 
@@ -26,18 +24,23 @@ async def get_current_user(request: Request) -> dict:
 
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Tipo de token inválido")
-    try:
-        oid = ObjectId(payload["sub"])
-    except (InvalidId, KeyError, TypeError):
+
+    # O `sub` era um ObjectId do Mongo e precisava ser convertido — uma string
+    # torta levantava InvalidId, que virava 500 em vez de 401. Agora é o mesmo
+    # uuid em texto que está na coluna `id`: não há conversão, e token forjado
+    # simplesmente não encontra usuário.
+    uid = payload.get("sub") or ""
+    if not uid:
         raise HTTPException(status_code=401, detail="Token inválido")
 
-    user = await db.users.find_one({"_id": oid})
+    user = await repo.pegar("users", uid)
     if not user:
         raise HTTPException(status_code=401, detail="Usuário não encontrado")
     if user.get("active") is False:
         raise HTTPException(status_code=403, detail="Conta desativada")
 
-    user["id"] = str(user.pop("_id"))
+    # O hash da senha nunca sai daqui: este dicionário é devolvido em /auth/me
+    # e circula por todo router como `user`.
     user.pop("password_hash", None)
     return user
 

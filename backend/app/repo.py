@@ -1,54 +1,196 @@
-"""Helpers de acesso a dados compartilhados pelos routers."""
-import re
-from typing import Any
+"""Acesso a dados — o que os routers usam no lugar das chamadas ao Mongo.
+
+Cada função aqui existe porque a mesma linha se repetia em treze arquivos. A
+tradução de Mongo para SQL ficou contida neste módulo e em `consulta.py`: os
+routers passam a pedir "o pedido X" em vez de montar `{"id": x}` e lembrar da
+projeção que esconde o `_id`.
+
+Uma diferença de comportamento vale registrar: no Mongo, gravar um campo que
+ninguém declarou simplesmente acrescentava uma chave ao documento. Aqui, uma
+coluna inexistente é erro — e é por isso que `scripts/conferir_schema.py`
+existe, para que esse erro apareça no CI e não em produção.
+"""
+from __future__ import annotations
+
+from typing import Any, Iterable
 
 from fastapi import HTTPException
-from pymongo import ASCENDING, DESCENDING
 
-from .db import db
+from . import pg
+from .consulta import Filtro, coluna, ordenacao
 
-PROJECTION = {"_id": 0}
+# Tabelas cujo `id` é gerado pela aplicação (uuid4) — todas, menos as efêmeras.
+PAGINA_MAXIMA = 200
 
 
-async def get_or_404(collection: str, doc_id: str, label: str) -> dict:
-    doc = await db[collection].find_one({"id": doc_id}, PROJECTION)
+# ------------------------------------------------------------------ leitura
+async def pegar(tabela: str, doc_id: str) -> dict | None:
+    return await pg.um(f'SELECT * FROM "{_tabela(tabela)}" WHERE id = $1', doc_id)
+
+
+async def get_or_404(tabela: str, doc_id: str, rotulo: str) -> dict:
+    doc = await pegar(tabela, doc_id)
     if not doc:
-        raise HTTPException(status_code=404, detail=f"{label} não encontrado")
+        raise HTTPException(status_code=404, detail=f"{rotulo} não encontrado")
     return doc
 
 
-def regex_filter(term: str, fields: list[str]) -> dict:
-    """Busca parcial case-insensitive. Escapa o termo para que um usuário digitando
-    '(11) 9' não quebre a query com um regex inválido."""
-    pattern = re.compile(re.escape(term.strip()), re.IGNORECASE)
-    return {"$or": [{f: pattern} for f in fields]}
+async def um_por(tabela: str, campo: str, valor) -> dict | None:
+    """Primeira linha com `campo = valor` — e-mail, slug, código, hash."""
+    col = coluna(tabela, campo)
+    return await pg.um(f'SELECT * FROM "{_tabela(tabela)}" WHERE {col} = $1 LIMIT 1', valor)
 
 
-async def paginate(
-    collection: str,
-    query: dict,
+async def existe(tabela: str, campo: str, valor) -> bool:
+    col = coluna(tabela, campo)
+    return bool(
+        await pg.valor(f'SELECT 1 FROM "{_tabela(tabela)}" WHERE {col} = $1 LIMIT 1', valor)
+    )
+
+
+async def listar(
+    tabela: str,
+    filtro: Filtro | None = None,
+    *,
+    ordenar_por: str = "created_at",
+    direcao: str = "desc",
+    limite: int | None = None,
+) -> list[dict]:
+    onde, args = (filtro.onde() if filtro else ("", []))
+    sql = (
+        f'SELECT * FROM "{_tabela(tabela)}" {onde} '
+        f"{ordenacao(tabela, ordenar_por, direcao)}"
+    )
+    if limite:
+        args = [*args, int(limite)]
+        sql += f" LIMIT ${len(args)}"
+    return await pg.varios(sql, *args)
+
+
+async def contar(tabela: str, filtro: Filtro | None = None) -> int:
+    onde, args = (filtro.onde() if filtro else ("", []))
+    return int(await pg.valor(f'SELECT count(*) FROM "{_tabela(tabela)}" {onde}', *args) or 0)
+
+
+async def somar(tabela: str, campo: str, filtro: Filtro | None = None) -> float:
+    """Soma de uma coluna.
+
+    `COALESCE` porque `SUM` de conjunto vazio devolve NULL, não zero — e um
+    None escapando daqui viraria "R$ None" na tela do financeiro.
+    """
+    col = coluna(tabela, campo)
+    onde, args = (filtro.onde() if filtro else ("", []))
+    total = await pg.valor(
+        f'SELECT COALESCE(SUM({col}), 0) FROM "{_tabela(tabela)}" {onde}', *args
+    )
+    return round(float(total or 0), 2)
+
+
+async def paginar(
+    tabela: str,
+    filtro: Filtro | None = None,
     *,
     page: int = 1,
     page_size: int = 25,
-    sort_field: str = "created_at",
-    sort_dir: str = "desc",
+    ordenar_por: str = "created_at",
+    direcao: str = "desc",
 ) -> dict[str, Any]:
-    page = max(1, page)
-    page_size = max(1, min(page_size, 200))
-    direction = DESCENDING if sort_dir == "desc" else ASCENDING
-    cursor = (
-        db[collection]
-        .find(query, PROJECTION)
-        .sort(sort_field, direction)
-        .skip((page - 1) * page_size)
-        .limit(page_size)
+    """Página de resultados, no mesmo formato que o painel já consome."""
+    page = max(1, int(page or 1))
+    page_size = max(1, min(int(page_size or 25), PAGINA_MAXIMA))
+    onde, args = (filtro.onde() if filtro else ("", []))
+
+    total = int(await pg.valor(f'SELECT count(*) FROM "{_tabela(tabela)}" {onde}', *args) or 0)
+    itens = await pg.varios(
+        f'SELECT * FROM "{_tabela(tabela)}" {onde} '
+        f"{ordenacao(tabela, ordenar_por, direcao)} "
+        f"LIMIT ${len(args) + 1} OFFSET ${len(args) + 2}",
+        *args,
+        page_size,
+        (page - 1) * page_size,
     )
-    items = await cursor.to_list(page_size)
-    total = await db[collection].count_documents(query)
     return {
-        "items": items,
+        "items": itens,
         "total": total,
         "page": page,
         "page_size": page_size,
         "pages": max(1, -(-total // page_size)),
     }
+
+
+# ------------------------------------------------------------------ escrita
+async def inserir(tabela: str, dados: dict) -> dict:
+    """INSERT com as colunas conferidas, devolvendo a linha gravada.
+
+    Devolver a linha (em vez de reler depois) economiza uma ida ao banco — que
+    a 200 ms de distância não é detalhe — e garante que o que volta é o que
+    ficou gravado, com os DEFAULT do schema já aplicados.
+    """
+    campos = [coluna(tabela, k) for k in dados]
+    marcadores = [f"${i}" for i in range(1, len(dados) + 1)]
+    sql = (
+        f'INSERT INTO "{_tabela(tabela)}" ({", ".join(campos)}) '
+        f'VALUES ({", ".join(marcadores)}) RETURNING *'
+    )
+    return await pg.um(sql, *dados.values())
+
+
+async def atualizar(tabela: str, doc_id: str, campos: dict) -> dict | None:
+    """UPDATE por id. Dicionário vazio não vira SQL — devolve a linha atual."""
+    if not campos:
+        return await pegar(tabela, doc_id)
+    atribuicoes = [f"{coluna(tabela, k)} = ${i}" for i, k in enumerate(campos, start=1)]
+    sql = (
+        f'UPDATE "{_tabela(tabela)}" SET {", ".join(atribuicoes)} '
+        f"WHERE id = ${len(campos) + 1} RETURNING *"
+    )
+    return await pg.um(sql, *campos.values(), doc_id)
+
+
+async def incrementar(tabela: str, doc_id: str, campos: dict[str, float]) -> dict | None:
+    """Soma valores a colunas numéricas, no banco.
+
+    Era `$inc`. Importa ser feito pelo banco, e não lendo-somando-gravando: dois
+    pedidos entregues ao mesmo tempo para o mesmo entregador perderiam um dos
+    lançamentos, e a diferença só apareceria no fechamento do mês.
+    """
+    if not campos:
+        return await pegar(tabela, doc_id)
+    atribuicoes = [
+        f"{coluna(tabela, k)} = {coluna(tabela, k)} + ${i}"
+        for i, k in enumerate(campos, start=1)
+    ]
+    sql = (
+        f'UPDATE "{_tabela(tabela)}" SET {", ".join(atribuicoes)} '
+        f"WHERE id = ${len(campos) + 1} RETURNING *"
+    )
+    return await pg.um(sql, *campos.values(), doc_id)
+
+
+async def remover(tabela: str, doc_id: str) -> bool:
+    resultado = await pg.executar(f'DELETE FROM "{_tabela(tabela)}" WHERE id = $1', doc_id)
+    return resultado.endswith(" 1")
+
+
+async def remover_onde(tabela: str, filtro: Filtro) -> int:
+    onde, args = filtro.onde()
+    if not onde:
+        # Um filtro vazio aqui apagaria a tabela inteira. Nenhuma chamada do
+        # sistema quer isso, então é erro de programação, não operação válida.
+        raise ValueError(f"remover_onde em {tabela} sem nenhuma condição")
+    resultado = await pg.executar(f'DELETE FROM "{_tabela(tabela)}" {onde}', *args)
+    return int(resultado.rsplit(" ", 1)[-1] or 0)
+
+
+# ------------------------------------------------------------------ apoio
+def _tabela(nome: str) -> str:
+    from .consulta import COLUNAS
+
+    if nome not in COLUNAS:
+        raise ValueError(f"tabela desconhecida: {nome}")
+    return nome
+
+
+def filtro(tabela: str) -> Filtro:
+    """Atalho, para o router não precisar importar `consulta`."""
+    return Filtro(tabela)
