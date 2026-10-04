@@ -84,7 +84,20 @@ jobs:
 
       - name: pytest
         working-directory: backend
-        run: pytest tests/ -q
+        # -rfE lista no fim cada falha com a mensagem. A saída vai também para
+        # um arquivo, lido pelo passo seguinte quando algo quebra.
+        run: |
+          pytest tests/ -q -rfE 2>&1 | tee pytest.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Falhas como anotação
+        # Anotação aparece no resumo do PR e da execução — e, em repositório
+        # público, é legível sem login, ao contrário do log completo.
+        if: failure()
+        working-directory: backend
+        run: |
+          grep -E "^(FAILED|ERROR) " pytest.log | head -40 | sed 's/^/::error::/' || true
+          grep -E "Traceback|ERROR \[" api.log | head -5 | sed 's/^/::warning::api.log: /' || true
 
       - name: Log da API quando algo falha
         if: failure()
