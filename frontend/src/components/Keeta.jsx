@@ -32,6 +32,28 @@ export function MascoteKeeta({ altura = 64, className = "" }) {
   );
 }
 
+// Altura do mascote por tamanho do logo. Um pouco maior que o logo: o
+// mascote é alto e estreito, e na mesma altura pareceria menor que o letreiro.
+const MASCOTE_POR_TAMANHO = { sm: 50, md: 84, lg: 128, xl: 170 };
+
+/**
+ * Logo da Miliano com o mascote ao LADO — na mesma linha, à direita, nunca
+ * em cima ou embaixo. `flex-nowrap` garante isso mesmo em tela estreita: lá o
+ * conjunto encolhe junto (quem usa escolhe um `tamanho` menor), em vez de o
+ * mascote quebrar para a linha de baixo.
+ */
+export function MarcaComMascote({ tamanho = "md", brilho = false, className = "" }) {
+  return (
+    <div
+      className={`flex flex-nowrap items-center gap-2 sm:gap-3 ${className}`}
+      data-testid="marca-com-mascote"
+    >
+      <Logo tamanho={tamanho} brilho={brilho} />
+      <MascoteKeeta altura={MASCOTE_POR_TAMANHO[tamanho] || MASCOTE_POR_TAMANHO.md} />
+    </div>
+  );
+}
+
 /**
  * Parceria oficial Keeta.
  *

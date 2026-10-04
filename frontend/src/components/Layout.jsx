@@ -9,8 +9,7 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { CommandPalette } from "@/components/CommandPalette";
 import { AccountDialog } from "@/components/AccountDialog";
-import { Logo } from "@/components/Logo";
-import { SeloKeeta } from "@/components/Keeta";
+import { MarcaComMascote, SeloKeeta } from "@/components/Keeta";
 import ErrorBoundary from "@/components/ErrorBoundary";
 
 /* A navegação era uma barra lateral fixa de 256px. No topo ela devolve essa
@@ -162,7 +161,7 @@ export default function Layout() {
             {menuMovel ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
           </button>
 
-          <Logo tamanho="sm" className="shrink-0" />
+          <MarcaComMascote tamanho="sm" className="shrink-0" />
 
           <div className="hidden h-8 w-px bg-slate-800 xl:block" />
           <SeloKeeta className="hidden xl:flex" />

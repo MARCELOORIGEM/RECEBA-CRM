@@ -5,7 +5,7 @@ import {
   ArrowRight, BarChart3, Eye, EyeOff, Loader2, Lock, Mail, ShieldCheck, Truck, Users,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
-import { Logo } from "@/components/Logo";
+import { MarcaComMascote } from "@/components/Keeta";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -207,7 +207,7 @@ export default function Login() {
         {/* ------------------------------------------------ apresentação */}
         <section className="hidden lg:flex flex-col justify-between p-12 xl:p-16">
           <div className="animate-reveal-up">
-            <Logo tamanho="lg" brilho />
+            <MarcaComMascote tamanho="lg" brilho />
           </div>
 
           <div className="space-y-8 max-w-lg">
@@ -316,7 +316,7 @@ export default function Login() {
 
               <div className="relative">
                 <div className="lg:hidden mb-7">
-                  <Logo tamanho="md" brilho />
+                  <MarcaComMascote tamanho="md" brilho />
                 </div>
 
                 <h2 className="font-heading text-2xl font-bold text-slate-50">Entrar no painel</h2>

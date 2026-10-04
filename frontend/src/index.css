@@ -110,20 +110,29 @@ h1, h2, h3, h4, h5, .font-heading {
     color: transparent;
 }
 
-/* Brilho que atravessa o letreiro devagar, como a luz do logo impresso. */
-.brilho-passante {
+/* Brilho que atravessa o logo devagar, como a luz do letreiro impresso.
+   A máscara é a própria imagem do logo (aplicada em Logo.jsx): a faixa de luz só aparece onde há
+   desenho, e o fundo transparente continua transparente. A animação vem da
+   classe `animate-shine` (tailwind.config.js), aplicada junto. */
+.logo-brilho {
     background-image: linear-gradient(
         100deg,
-        transparent 20%,
-        rgba(255, 255, 255, 0.85) 42%,
-        rgba(255, 210, 143, 0.9) 50%,
-        transparent 72%
+        transparent 30%,
+        rgba(255, 255, 255, 0.55) 46%,
+        rgba(255, 210, 143, 0.6) 50%,
+        transparent 64%
     );
     background-size: 200% 100%;
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    animation: shine 6s linear infinite;
+    /* A imagem da máscara vai inline, no componente: aqui o css-loader
+       tentaria empacotar o arquivo de public/ como módulo e o build quebra. */
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+    mix-blend-mode: screen;
+    pointer-events: none;
 }
 
 .sombra-dourada {
