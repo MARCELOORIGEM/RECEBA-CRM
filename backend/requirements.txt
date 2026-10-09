@@ -24,3 +24,8 @@ tzdata==2024.2
 sentry-sdk==2.19.2
 # Driver PostgreSQL assíncrono — o banco é o Supabase (ver app/pg.py).
 asyncpg==0.30.0
+# Importação de planilha no Funil: ler .xlsx e gerar o modelo para download.
+openpyxl==3.1.5
+# Upload de arquivo (UploadFile do FastAPI). Sem ele, a rota de importação
+# nem registra — o FastAPI recusa subir.
+python-multipart==0.0.20

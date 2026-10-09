@@ -4,14 +4,18 @@ A Miliano prospecta restaurantes e recruta entregadores, mas o sistema só sabia
 lidar com quem já era cliente. Sem funil não há previsão de receita, não há
 motivo de perda e não há como saber quem precisa de follow-up hoje.
 """
+import re
 import uuid
+from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 
 from .. import audit, pg, repo
 from ..deps import get_current_user, require_admin
 from ..permissoes import acesso
 from ..models import LeadInput, LeadStagePatch
+from ..planilha_leads import PlanilhaInvalida, gerar_modelo, interpretar, ler_arquivo
 from ..repo import get_or_404
 from ..security import now_iso, now_utc
 
@@ -104,6 +108,129 @@ async def funnel(user: dict = Depends(get_current_user)):
         "ganhos": ganhos,
         "perdidos": perdidos,
     }
+
+
+# ------------------------------------------------------------- planilha
+XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+# Colunas gravadas na importação, nesta ordem (o executemany precisa de todas
+# as linhas com as mesmas colunas).
+_COLUNAS_IMPORTACAO = (
+    "id", "name", "contact_name", "phone", "email", "city", "category", "source", "stage",
+    "estimated_value", "owner_name", "notes", "lost_reason", "stage_history", "origem",
+    "created_by",
+)
+
+
+def _digitos(telefone: str) -> str:
+    """Telefone só com números, sem o 55 do país: "(11) 9 8888-1234" e
+    "+55 11 988881234" são o mesmo número."""
+    d = re.sub(r"\D", "", telefone or "")
+    if len(d) > 11 and d.startswith("55"):
+        d = d[2:]
+    return d if len(d) >= 8 else ""
+
+
+@router.get("/modelo")
+async def baixar_modelo(atual: bool = Query(False)):
+    """Planilha para preencher e importar.
+
+    `atual=true` devolve o funil de hoje no mesmo formato — dá para editar e
+    importar de volta, e o que já existe é reconhecido em vez de duplicar.
+    """
+    leads = await repo.listar("leads", ordenar_por="created_at", direcao="asc") if atual else None
+    nome = f"funil-{date.today().isoformat()}.xlsx" if atual else "modelo-importacao-funil.xlsx"
+    return Response(
+        content=gerar_modelo(leads),
+        media_type=XLSX,
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+    )
+
+
+@router.post("/importar")
+async def importar_planilha(
+    arquivo: UploadFile = File(...),
+    simular: bool = Query(True),
+    user: dict = Depends(get_current_user),
+):
+    """Importa leads de uma planilha (.xlsx ou .csv).
+
+    Por padrão SIMULA: devolve o que entraria, o que tem erro e o que já
+    existe, sem gravar nada. Com `simular=false`, grava os novos de uma vez,
+    numa transação só — ou entram todos, ou nenhum.
+    """
+    dados = await arquivo.read()
+    try:
+        resultado = interpretar(ler_arquivo(dados, arquivo.filename or ""))
+    except PlanilhaInvalida as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    # O que já está no funil, por e-mail e por telefone. Nome sozinho não
+    # serve: há mais de uma "Pizzaria Bella" na mesma cidade.
+    existentes = await pg.varios("SELECT email, phone FROM leads")
+    emails = {(e["email"] or "").strip().lower() for e in existentes} - {""}
+    fones = {_digitos(e["phone"]) for e in existentes} - {""}
+
+    novos, duplicados = [], []
+    for lead in resultado.validos:
+        email = (lead.get("email") or "").strip().lower()
+        fone = _digitos(lead.get("phone") or "")
+        if email and email in emails:
+            motivo = f"e-mail {email} já está no funil"
+        elif fone and fone in fones:
+            motivo = f"telefone {lead.get('phone')} já está no funil"
+        else:
+            novos.append(lead)
+            # Também barra a repetição dentro da própria planilha.
+            if email:
+                emails.add(email)
+            if fone:
+                fones.add(fone)
+            continue
+        duplicados.append({"linha": lead["linha"], "nome": lead["name"], "motivo": motivo})
+
+    resposta = {
+        "total": resultado.total,
+        "novos": len(novos),
+        "duplicados": duplicados,
+        "erros": resultado.erros,
+        "colunas_ignoradas": resultado.colunas_ignoradas,
+        "previa": [
+            {k: lead.get(k) for k in ("linha", "name", "contact_name", "phone", "city",
+                                      "source", "stage", "estimated_value")}
+            for lead in novos[:15]
+        ],
+        "importados": 0,
+    }
+    if simular or not novos:
+        return resposta
+
+    agora_iso = now_iso()
+    linhas = [
+        (
+            str(uuid.uuid4()), lead["name"], lead["contact_name"], lead["phone"], lead["email"],
+            lead["city"], lead["category"], lead["source"], lead["stage"],
+            lead["estimated_value"], lead["owner_name"] or user["name"], lead["notes"],
+            lead["lost_reason"] if lead["stage"] == "perdido" else "",
+            [{"stage": lead["stage"], "at": agora_iso, "by": f"Planilha ({user['name']})"}],
+            "planilha", user["name"],
+        )
+        for lead in novos
+    ]
+    campos = ", ".join(_COLUNAS_IMPORTACAO)
+    marcadores = ", ".join(f"${i}" for i in range(1, len(_COLUNAS_IMPORTACAO) + 1))
+    # Tudo numa transação: um erro no lead 300 não deixa 299 gravados e a
+    # pessoa sem saber de onde recomeçar.
+    async with pg.pool().acquire() as con:
+        async with con.transaction():
+            await con.executemany(f"INSERT INTO leads ({campos}) VALUES ({marcadores})", linhas)
+
+    await audit.record(
+        user, "importou planilha", "lead", "",
+        label=f"{len(novos)} lead(s) de {arquivo.filename or 'planilha'}",
+    )
+    resposta["importados"] = len(novos)
+    return resposta
 
 
 @router.get("/{lid}")

@@ -3,11 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
   ArrowRight, Building2, GripVertical, Loader2, MapPin, MoveRight, Phone, Plus, Trash2,
-  TrendingUp, UserPlus,
+  TrendingUp, Upload, UserPlus,
 } from "lucide-react";
 import { api, apiError, brl, getList } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useConfirm } from "@/components/ConfirmDialog";
+import { BaixarPlanilha, ImportarLeads } from "@/components/ImportarLeads";
 import { EmptyState, IconButton, Loading, MetricCard, Panel } from "@/components/Ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,6 +62,7 @@ export default function Pipeline() {
   const [arrastando, setArrastando] = useState(null);
   const [alvo, setAlvo] = useState(null);
   const [perda, setPerda] = useState(null); // { lead, motivo }
+  const [importando, setImportando] = useState(false);
 
   const { data: leads, isLoading } = useQuery({
     queryKey: ["leads"],
@@ -178,22 +180,39 @@ export default function Pipeline() {
         />
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-slate-500">
           Arraste os cartões entre as colunas — ou use o botão de mover no cartão.
         </p>
-        <Button
-          onClick={() => {
-            setForm(VAZIO);
-            setEditId(null);
-            setAberto(true);
-          }}
-          data-testid="btn-novo-lead"
-          className="bg-primary hover:bg-orange-600 text-white gap-2"
-        >
-          <Plus className="w-4 h-4" /> Novo Lead
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <BaixarPlanilha />
+          <Button
+            variant="outline"
+            onClick={() => setImportando(true)}
+            data-testid="btn-importar-planilha"
+            className="border-slate-700 gap-2"
+          >
+            <Upload className="w-4 h-4" /> Importar planilha
+          </Button>
+          <Button
+            onClick={() => {
+              setForm(VAZIO);
+              setEditId(null);
+              setAberto(true);
+            }}
+            data-testid="btn-novo-lead"
+            className="bg-primary hover:bg-orange-600 text-white gap-2"
+          >
+            <Plus className="w-4 h-4" /> Novo Lead
+          </Button>
+        </div>
       </div>
+
+      <ImportarLeads
+        aberto={importando}
+        onFechar={() => setImportando(false)}
+        onImportado={invalidar}
+      />
 
       {isLoading ? (
         <Loading />
