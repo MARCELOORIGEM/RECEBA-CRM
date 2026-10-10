@@ -19,7 +19,7 @@ import asyncio
 
 from fastapi import APIRouter, Depends
 
-from .. import pg, tempo
+from .. import funil as funil_campo, pg, tempo
 from ..config import settings
 from ..deps import get_current_user
 from ..permissoes import acesso
@@ -27,7 +27,11 @@ from ..security import now_utc
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(acesso("dashboard"))])
 
-ABERTOS = ("novo", "contatado", "negociacao", "proposta")
+# Grupos do funil de visita (app/funil.py): o que está em trabalho, o que
+# foi ativado e o que foi descartado.
+ABERTOS = funil_campo.ABERTOS
+GANHOS = funil_campo.GANHOS
+PERDIDOS = funil_campo.PERDIDOS
 
 
 def _delta(atual: float, anterior: float) -> float:
@@ -200,8 +204,8 @@ async def stats(user: dict = Depends(get_current_user)):
         "funil": {
             "em_aberto": sum(etapas.get(s, {}).get("qtd", 0) for s in ABERTOS),
             "valor_em_aberto": _r(sum(float(etapas.get(s, {}).get("valor", 0)) for s in ABERTOS)),
-            "ganhos": etapas.get("ganho", {}).get("qtd", 0),
-            "perdidos": etapas.get("perdido", {}).get("qtd", 0),
+            "ganhos": sum(etapas.get(s, {}).get("qtd", 0) for s in GANHOS),
+            "perdidos": sum(etapas.get(s, {}).get("qtd", 0) for s in PERDIDOS),
         },
         "agenda": {"atrasadas": p["atrasadas"], "hoje": p["hoje"]},
         "hourly": hourly,

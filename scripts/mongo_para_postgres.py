@@ -78,14 +78,25 @@ ENUMS: dict[tuple[str, str], tuple[set[str], str | None]] = {
     ("payments", "method"): ({"PIX", "Transferência", "Dinheiro", "Boleto"}, "PIX"),
     ("leads", "source"): ({"indicacao", "instagram", "prospeccao", "site", "whatsapp",
                            "evento", "outro"}, "outro"),
-    ("leads", "stage"): ({"novo", "contatado", "negociacao", "proposta", "ganho",
-                          "perdido"}, "novo"),
+    # Status da visita (backend/app/funil.py). As etapas antigas do Mongo são
+    # convertidas antes, em `sanear` (LEGADO_FUNIL).
+    ("leads", "stage"): ({"a_visitar", "nao_localizado", "fechado_no_local",
+                          "responsavel_ausente", "colhendo_dados", "reuniao", "segunda_visita",
+                          "aguardando_documentos", "cadastro_enviado", "ativado",
+                          "sem_interesse", "ja_parceiro", "fora_da_area"}, "a_visitar"),
     ("activities", "kind"): ({"tarefa", "interacao"}, "tarefa"),
     ("activities", "type"): ({"ligacao", "whatsapp", "email", "reuniao", "visita", "nota",
                               "tarefa"}, "tarefa"),
     ("activities", "related_type"): ({"lead", "restaurante", "entregador", "pedido"}, None),
     ("forms", "target"): ({"lead", "restaurante", "entregador"}, "lead"),
     ("api_keys", "environment"): ({"production", "sandbox"}, "sandbox"),
+}
+
+# As seis etapas do funil antigo -> status da visita de campo. Cópia de
+# `LEGADO` em backend/app/funil.py (este script roda sem importar o app).
+LEGADO_FUNIL = {
+    "novo": "a_visitar", "contatado": "colhendo_dados", "negociacao": "reuniao",
+    "proposta": "cadastro_enviado", "ganho": "ativado", "perdido": "sem_interesse",
 }
 
 # Faixas numéricas dos CHECK: valor fora é trazido para dentro.
@@ -173,6 +184,9 @@ def sanear(tabela: str, linha: dict, extras: dict) -> None:
     quando a tabela tem `extra_fields` — o dado não se perde, só sai da
     coluna que o recusaria.
     """
+    if tabela == "leads" and linha.get("stage") in LEGADO_FUNIL:
+        linha["stage"] = LEGADO_FUNIL[linha["stage"]]
+
     for (t, col), (validos, padrao) in ENUMS.items():
         if t == tabela and col in linha and linha[col] not in validos:
             if linha[col] not in (None, ""):

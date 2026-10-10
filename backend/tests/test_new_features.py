@@ -27,29 +27,76 @@ class TestFunil:
         yield doc
         admin.delete(f"{API}/leads/{doc['id']}", timeout=TIMEOUT)
 
-    def test_nasce_em_novo_com_historico(self, lead):
-        assert lead["stage"] == "novo"
-        assert lead["stage_history"][0]["stage"] == "novo"
+    def test_nasce_a_visitar_com_historico(self, lead):
+        assert lead["stage"] == "a_visitar"
+        assert lead["stage_history"][0]["stage"] == "a_visitar"
 
-    def test_mover_etapa_registra_historico(self, admin, lead):
-        r = admin.patch(f"{API}/leads/{lead['id']}/stage", json={"stage": "negociacao"}, timeout=TIMEOUT)
+    def test_mover_status_registra_historico(self, admin, lead):
+        r = admin.patch(f"{API}/leads/{lead['id']}/stage", json={"stage": "reuniao"}, timeout=TIMEOUT)
         assert r.status_code == 200
-        assert r.json()["stage"] == "negociacao"
+        assert r.json()["stage"] == "reuniao"
         assert len(r.json()["stage_history"]) == 2
 
-    def test_perda_exige_motivo(self, admin, lead):
+    def test_sem_interesse_exige_motivo(self, admin, lead):
         sem_motivo = admin.patch(
-            f"{API}/leads/{lead['id']}/stage", json={"stage": "perdido"}, timeout=TIMEOUT
+            f"{API}/leads/{lead['id']}/stage", json={"stage": "sem_interesse"}, timeout=TIMEOUT
         )
         assert sem_motivo.status_code == 422
 
         com_motivo = admin.patch(
             f"{API}/leads/{lead['id']}/stage",
-            json={"stage": "perdido", "lost_reason": "Achou a comissão alta"},
+            json={"stage": "sem_interesse", "lost_reason": "Achou a comissão alta"},
             timeout=TIMEOUT,
         )
         assert com_motivo.status_code == 200
         assert com_motivo.json()["lost_reason"] == "Achou a comissão alta"
+
+        # Voltar a trabalhar no lead limpa o motivo antigo.
+        de_volta = admin.patch(
+            f"{API}/leads/{lead['id']}/stage", json={"stage": "segunda_visita"}, timeout=TIMEOUT
+        )
+        assert de_volta.json()["lost_reason"] == ""
+
+    def test_descarte_que_se_explica_nao_pede_motivo(self, admin, lead):
+        r = admin.patch(
+            f"{API}/leads/{lead['id']}/stage", json={"stage": "fora_da_area"}, timeout=TIMEOUT
+        )
+        assert r.status_code == 200
+
+    def test_campos_de_campo_e_filtros(self, admin, nome_unico):
+        lider = nome_unico("Lider")
+        r = admin.post(
+            f"{API}/leads",
+            json={"name": nome_unico("Lead Campo"), "codigo_externo": nome_unico("ID")[-8:],
+                  "endereco": "RUA H, 357", "bairro": "UNIÃO", "bd_id": "BD9",
+                  "bd_nome": "JUNIAO", "lider": lider, "data_visita": "2026-10-05",
+                  "stage": "nao_localizado"},
+            timeout=TIMEOUT,
+        )
+        assert r.status_code == 201, r.text
+        lead = r.json()
+        try:
+            assert (lead["bairro"], lead["data_visita"], lead["stage"]) == (
+                "UNIÃO", "2026-10-05", "nao_localizado")
+            assert lider in admin.get(f"{API}/leads/filtros", timeout=TIMEOUT).json()["lideres"]
+            filtrados = admin.get(f"{API}/leads", params={"lider": lider}, timeout=TIMEOUT).json()
+            assert [l["id"] for l in filtrados["items"]] == [lead["id"]]
+            por_codigo = admin.get(f"{API}/leads", params={"search": lead["codigo_externo"]},
+                                   timeout=TIMEOUT).json()
+            assert por_codigo["total"] == 1
+        finally:
+            admin.delete(f"{API}/leads/{lead['id']}", timeout=TIMEOUT)
+
+    def test_lead_id_repetido_e_recusado(self, admin, nome_unico):
+        codigo = nome_unico("X")[-8:]
+        a = admin.post(f"{API}/leads", json={"name": nome_unico("A"), "codigo_externo": codigo},
+                       timeout=TIMEOUT).json()
+        try:
+            b = admin.post(f"{API}/leads", json={"name": nome_unico("B"), "codigo_externo": codigo},
+                           timeout=TIMEOUT)
+            assert b.status_code == 409
+        finally:
+            admin.delete(f"{API}/leads/{a['id']}", timeout=TIMEOUT)
 
     def test_etapa_invalida(self, admin, lead):
         r = admin.patch(f"{API}/leads/{lead['id']}/stage", json={"stage": "quase"}, timeout=TIMEOUT)
@@ -59,7 +106,7 @@ class TestFunil:
         r = admin.post(f"{API}/leads/{lead['id']}/convert", timeout=TIMEOUT)
         assert r.status_code == 200
         corpo = r.json()
-        assert corpo["lead"]["stage"] == "ganho"
+        assert corpo["lead"]["stage"] == "ativado"
         assert corpo["restaurant"]["name"] == lead["name"]
         assert corpo["restaurant"]["status"] == "em_analise"
 
@@ -70,7 +117,8 @@ class TestFunil:
 
     def test_resumo_do_funil(self, admin):
         f = admin.get(f"{API}/leads/funnel", timeout=TIMEOUT).json()
-        assert len(f["stages"]) == 6
+        assert len(f["stages"]) == 13
+        assert {s["grupo"] for s in f["stages"]} == {"aberto", "ganho", "perdido"}
         assert 0 <= f["taxa_conversao"] <= 100
         assert f["valor_em_aberto"] >= 0
 

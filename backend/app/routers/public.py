@@ -12,7 +12,7 @@ from typing import Any, get_args
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import repo
+from .. import funil, repo
 from ..config import settings
 from ..models import LeadSource
 from ..rede import ip_do_cliente
@@ -185,11 +185,13 @@ async def _criar_cadastro(form: dict, valores: dict, extras: dict) -> dict:
             "category": valores.get("category", ""),
             # O banco só aceita as origens da lista; texto livre vira "outro".
             "source": _origem(valores.get("source")),
-            "stage": "novo",
+            "stage": funil.INICIAL,
             "estimated_value": _numero(valores.get("estimated_value")),
             "owner_name": "",
             "lost_reason": "",
-            "stage_history": [{"stage": "novo", "at": now_iso(), "by": "formulário"}],
+            "stage_history": [{"stage": funil.INICIAL, "at": now_iso(), "by": "formulário"}],
+            "endereco": valores.get("endereco", ""),
+            "bairro": valores.get("bairro", ""),
         }
     elif destino == "restaurante":
         doc = {

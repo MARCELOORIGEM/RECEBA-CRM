@@ -26,17 +26,19 @@ import io
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 from pydantic import ValidationError
 
+from . import funil
 from .models import LeadInput
 
 LIMITE_LINHAS = 2000
 LIMITE_BYTES = 5 * 1024 * 1024
 
-# Origem e etapa com os MESMOS nomes da tela do Funil (Pipeline.jsx). A
-# planilha mostra o rótulo; o banco guarda a chave.
+# Origem e status com os MESMOS nomes da tela do Funil. A planilha mostra o
+# rótulo; o banco guarda a chave.
 ORIGENS = {
     "indicacao": "Indicação",
     "instagram": "Instagram",
@@ -46,14 +48,9 @@ ORIGENS = {
     "evento": "Evento",
     "outro": "Outro",
 }
-ETAPAS = {
-    "novo": "Novo",
-    "contatado": "Contatado",
-    "negociacao": "Em negociação",
-    "proposta": "Proposta",
-    "ganho": "Ganho",
-    "perdido": "Perdido",
-}
+# Em maiúsculas, como a planilha da operação escreve ("NÃO LOCALIZADO").
+# Na leitura, caixa e acento não importam.
+ETAPAS = {st.chave: st.rotulo.upper() for st in funil.STATUS}
 
 
 @dataclass(frozen=True)
@@ -62,31 +59,43 @@ class Coluna:
     titulo: str
     largura: int
     apelidos: tuple[str, ...] = ()
-    exemplo: tuple[str, ...] = ()
 
 
+# As dez primeiras são a planilha da operação, na mesma ordem (LEAD ID ... OBS).
+# As demais são opcionais e ficam à direita: quem não usa, apaga.
 COLUNAS: list[Coluna] = [
-    Coluna("name", "Nome do estabelecimento", 30,
-           ("nome", "estabelecimento", "restaurante", "empresa", "lead", "razao social"),
-           ("Padaria Estrela", "Temakeria Onda")),
-    Coluna("contact_name", "Contato", 22, ("nome do contato", "responsavel pelo local", "dono"),
-           ("Seu Antônio", "Vivian Sato")),
-    Coluna("phone", "Telefone", 18, ("celular", "whatsapp", "fone", "tel"),
-           ("(11) 98888-1234", "(11) 97777-4321")),
-    Coluna("email", "E-mail", 28, ("email", "e mail", "correio"),
-           ("contato@padariaestrela.com.br", "")),
-    Coluna("city", "Cidade", 18, ("municipio",), ("São Paulo", "Santo André")),
-    Coluna("category", "Categoria", 18, ("segmento", "tipo", "ramo"), ("Padaria", "Japonesa")),
-    Coluna("source", "Origem", 18, ("origem do lead", "fonte", "canal"),
-           ("Indicação", "Instagram")),
-    Coluna("stage", "Etapa", 18, ("estagio", "fase", "status"), ("Novo", "Em negociação")),
-    Coluna("estimated_value", "Valor estimado (R$)", 18,
-           ("valor estimado", "valor", "potencial", "valor mensal"), ("3200", "5.400,00")),
-    Coluna("owner_name", "Responsável", 20, ("vendedor", "dono do lead", "responsavel comercial"),
-           ("Gestor Operacional", "")),
-    Coluna("lost_reason", "Motivo da perda", 24, ("motivo", "motivo perda"), ("", "")),
-    Coluna("notes", "Observações", 36, ("obs", "observacao", "notas", "anotacoes"),
-           ("Pediu retorno na sexta", "")),
+    Coluna("codigo_externo", "LEAD ID", 12, ("id do lead", "lead", "codigo", "id")),
+    Coluna("name", "NOME LEAD", 30,
+           ("nome", "nome do estabelecimento", "estabelecimento", "restaurante", "empresa",
+            "razao social", "nome do lead")),
+    Coluna("endereco", "ENDEREÇO", 32, ("endereco completo", "logradouro", "rua")),
+    Coluna("bairro", "BAIRRO", 18, ()),
+    Coluna("bd_id", "BD ID", 10, ("id bd", "id do bd")),
+    Coluna("bd_nome", "NOME BD", 18, ("bd", "nome do bd", "vendedor", "consultor")),
+    Coluna("lider", "LIDER", 16, ("lider do bd", "supervisor", "coordenador")),
+    Coluna("data_visita", "DATA VISITA", 14, ("data da visita", "visita", "data")),
+    Coluna("stage", "STATUS", 24, ("etapa", "estagio", "fase", "situacao")),
+    Coluna("notes", "OBS", 40, ("observacao", "observacoes", "obs.", "notas", "anotacoes")),
+    Coluna("phone", "TELEFONE", 18, ("celular", "whatsapp", "fone", "tel")),
+    Coluna("contact_name", "CONTATO", 20, ("nome do contato", "responsavel pelo local", "dono")),
+    Coluna("email", "E-MAIL", 26, ("email", "e mail", "correio")),
+    Coluna("city", "CIDADE", 16, ("municipio",)),
+    Coluna("category", "CATEGORIA", 16, ("segmento", "tipo", "ramo")),
+    Coluna("source", "ORIGEM", 18, ("origem do lead", "fonte", "canal")),
+    Coluna("estimated_value", "VALOR ESTIMADO (R$)", 18,
+           ("valor estimado", "valor", "potencial", "valor mensal")),
+    Coluna("lost_reason", "MOTIVO", 24, ("motivo da perda", "motivo perda", "motivo do descarte")),
+    Coluna("owner_name", "RESPONSÁVEL", 18, ("responsavel", "dono do lead")),
+]
+
+EXEMPLOS = [
+    {"codigo_externo": "12345678", "name": "Restaurante 123", "endereco": "RUA H, 357 - UNIÃO",
+     "bairro": "UNIÃO", "bd_id": "BD01", "bd_nome": "JUNIAO", "lider": "TARCÍSIO",
+     "data_visita": "", "stage": "NÃO LOCALIZADO", "notes": ""},
+    {"codigo_externo": "12345679", "name": "Pizzaria Bella", "endereco": "AV. BRASIL, 1200",
+     "bairro": "CENTRO", "bd_id": "BD02", "bd_nome": "MARIANA", "lider": "TARCÍSIO",
+     "data_visita": date(2026, 10, 5), "stage": "REUNIÃO", "notes": "Dono pediu retorno às 15h",
+     "phone": "(11) 98888-1234"},
 ]
 
 
@@ -112,8 +121,17 @@ _VALORES: dict[str, dict[str, str]] = {
 }
 _VALORES["source"].update({"prospeccao ativa": "prospeccao", "insta": "instagram",
                            "zap": "whatsapp", "wpp": "whatsapp"})
-_VALORES["stage"].update({"negociacao": "negociacao", "proposta enviada": "proposta",
-                          "contato feito": "contatado"})
+# Etapas da versão anterior ("Novo", "Em negociação"...) e jeitos comuns de
+# escrever os status: uma planilha antiga ainda importa.
+_VALORES["stage"].update({_chave(k): v for k, v in funil.LEGADO.items()})
+_VALORES["stage"].update({
+    "em negociacao": "reuniao", "proposta enviada": "cadastro_enviado",
+    "reuniao agendada": "reuniao", "2a visita": "segunda_visita", "2 visita": "segunda_visita",
+    "retornar": "segunda_visita", "fechado no local": "fechado_no_local",
+    "estabelecimento fechado": "fechado_no_local", "nao encontrado": "nao_localizado",
+    "aguardando documentacao": "aguardando_documentos", "ativo": "ativado",
+    "parceiro": "ja_parceiro", "sem interesse": "sem_interesse", "recusou": "sem_interesse",
+})
 
 
 # ------------------------------------------------------------------ leitura
@@ -196,6 +214,25 @@ def _dinheiro(valor: Any) -> float:
     return numero * 1000 if mil else numero
 
 
+def _data(valor: Any):
+    """DATA VISITA: célula de data do Excel, "05/10/2026", "5/10/26" ou ISO."""
+    from datetime import datetime
+
+    if valor is None or valor == "":
+        return None
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    texto = str(valor).strip()
+    for formato in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(texto[:10] if formato == "%Y-%m-%d" else texto, formato).date()
+        except ValueError:
+            continue
+    raise ValueError(texto)
+
+
 @dataclass
 class Resultado:
     validos: list[dict] = field(default_factory=list)
@@ -229,7 +266,7 @@ def interpretar(linhas: list[list[Any]]) -> Resultado:
             res.colunas_ignoradas.append(_texto(titulo))
     if "name" not in mapa.values():
         raise PlanilhaInvalida(
-            'Não achei a coluna "Nome do estabelecimento" no cabeçalho. '
+            'Não achei a coluna "NOME LEAD" no cabeçalho. '
             "Baixe o modelo e use os mesmos títulos de coluna."
         )
 
@@ -253,6 +290,11 @@ def interpretar(linhas: list[list[Any]]) -> Resultado:
                     dados[campo] = _dinheiro(valor)
                 except ValueError:
                     problemas.append(f'"{_texto(valor)}" não é um valor em reais')
+            elif campo == "data_visita":
+                try:
+                    dados[campo] = _data(valor)
+                except ValueError:
+                    problemas.append(f'DATA VISITA "{_texto(valor)}" não é uma data (use 05/10/2026)')
             elif campo in _VALORES:
                 texto = _texto(valor)
                 if not texto:
@@ -266,8 +308,9 @@ def interpretar(linhas: list[list[Any]]) -> Resultado:
             else:
                 dados[campo] = _texto(valor)
 
-        if dados.get("stage") == "perdido" and not dados.get("lost_reason"):
-            problemas.append('Etapa "Perdido" precisa do Motivo da perda')
+        if funil.pede_motivo(dados.get("stage", "")) and not dados.get("lost_reason"):
+            rotulo = funil.POR_CHAVE[dados["stage"]].rotulo.upper()
+            problemas.append(f'STATUS "{rotulo}" precisa da coluna MOTIVO preenchida')
 
         if not problemas:
             try:
@@ -277,7 +320,10 @@ def interpretar(linhas: list[list[Any]]) -> Resultado:
                     campo = str(err["loc"][0]) if err.get("loc") else ""
                     problemas.append(f"{_ROTULO_DO_CAMPO.get(campo, campo)}: {_msg(err)}")
             else:
-                res.validos.append({"linha": numero, **lead})
+                # Quais células vieram preenchidas: na atualização de um lead
+                # que já existe, célula vazia não apaga o que está gravado.
+                preenchidos = [c for c, v in bruto.items() if _texto(v)]
+                res.validos.append({"linha": numero, "_preenchidos": preenchidos, **lead})
                 continue
         res.erros.append({
             "linha": numero,
@@ -300,14 +346,14 @@ def _msg(err: dict) -> str:
 
 # ------------------------------------------------------------------ modelo
 def gerar_modelo(leads: list[dict] | None = None) -> bytes:
-    """O .xlsx para baixar.
+    """O .xlsx para baixar, no formato da planilha da operação.
 
-    Sem `leads`, o modelo em branco com duas linhas de exemplo. Com `leads`, o
-    funil atual no mesmo formato — que também pode ser editado e importado de
-    volta (o que já existe é reconhecido e não duplica).
+    Sem `leads`, o modelo com duas linhas de exemplo. Com `leads`, o funil
+    atual no mesmo formato — dá para editar e importar de volta: o LEAD ID
+    reconhece cada lead e a linha atualiza em vez de duplicar.
     """
     from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.utils import get_column_letter
     from openpyxl.worksheet.datavalidation import DataValidation
 
@@ -315,34 +361,45 @@ def gerar_modelo(leads: list[dict] | None = None) -> bytes:
     aba = livro.active
     aba.title = "Leads"
 
-    dourado = PatternFill("solid", fgColor="F5A524")
+    # As cores da planilha da operação: verde-escuro com letra branca.
+    fundo = PatternFill("solid", fgColor="1F4E4C")
+    fundo_opcional = PatternFill("solid", fgColor="3B6B68")
+    fino = Side(style="thin", color="BBBBBB")
     for i, col in enumerate(COLUNAS, start=1):
         celula = aba.cell(row=1, column=i, value=col.titulo)
-        celula.font = Font(bold=True, color="111111")
-        celula.fill = dourado
-        celula.alignment = Alignment(vertical="center")
+        celula.font = Font(bold=True, color="FFFFFF")
+        # As dez primeiras são as da operação; as opcionais, um tom mais claro.
+        celula.fill = fundo if i <= 10 else fundo_opcional
+        celula.alignment = Alignment(horizontal="center", vertical="center")
+        celula.border = Border(bottom=fino)
         aba.column_dimensions[get_column_letter(i)].width = col.largura
     aba.row_dimensions[1].height = 22
-    aba.freeze_panes = "A2"
+    aba.freeze_panes = "B2"
+    aba.auto_filter.ref = f"A1:{get_column_letter(len(COLUNAS))}1"
 
-    if leads is None:
-        linhas = [[c.exemplo[k] if k < len(c.exemplo) else "" for c in COLUNAS] for k in range(2)]
-    else:
-        linhas = [
-            [
-                ORIGENS.get(lead.get(c.campo), "") if c.campo == "source"
-                else ETAPAS.get(lead.get(c.campo), "") if c.campo == "stage"
-                else lead.get(c.campo) or ("" if c.campo != "estimated_value" else 0)
-                for c in COLUNAS
-            ]
-            for lead in leads
-        ]
-    for linha in linhas:
-        aba.append(linha)
+    def celula_de(lead: dict, c: Coluna):
+        valor = lead.get(c.campo)
+        if c.campo == "source":
+            return ORIGENS.get(valor, valor or "")
+        if c.campo == "stage":
+            return ETAPAS.get(valor, valor or "")
+        if c.campo == "estimated_value":
+            return valor or None
+        if c.campo == "data_visita":
+            return valor or None
+        return valor or ""
 
-    # Listas suspensas: quem preenche escolhe a origem e a etapa em vez de
-    # digitar — e não inventa "Insta" ou "Fechado".
-    ultima = max(LIMITE_LINHAS + 1, len(linhas) + 1)
+    registros = EXEMPLOS if leads is None else leads
+    for registro in registros:
+        aba.append([celula_de(registro, c) for c in COLUNAS])
+
+    coluna_data = next(i for i, c in enumerate(COLUNAS, 1) if c.campo == "data_visita")
+    for linha in range(2, len(registros) + 2):
+        aba.cell(row=linha, column=coluna_data).number_format = "DD/MM/YYYY"
+
+    # Listas suspensas: o BD escolhe o status e a origem em vez de digitar —
+    # e não inventa "Fechou" ou "Insta".
+    ultima = max(LIMITE_LINHAS + 1, len(registros) + 1)
     for campo, mapa in _ROTULOS.items():
         letra = get_column_letter(next(i for i, c in enumerate(COLUNAS, 1) if c.campo == campo))
         lista = DataValidation(
@@ -354,24 +411,33 @@ def gerar_modelo(leads: list[dict] | None = None) -> bytes:
         aba.add_data_validation(lista)
 
     instrucoes = livro.create_sheet("Instruções")
-    instrucoes.column_dimensions["A"].width = 26
-    instrucoes.column_dimensions["B"].width = 80
+    instrucoes.column_dimensions["A"].width = 24
+    instrucoes.column_dimensions["B"].width = 90
     texto = [
         ("Como preencher", ""),
         ("Uma linha por lead", "Comece na linha 2 da aba Leads. Linhas em branco são ignoradas."),
-        ("Obrigatório", "Só o Nome do estabelecimento. Os outros campos podem ficar vazios."),
-        ("Origem", "Escolha na lista: " + ", ".join(ORIGENS.values()) + ". Vazio = Prospecção ativa."),
-        ("Etapa", "Escolha na lista: " + ", ".join(ETAPAS.values()) + ". Vazio = Novo."),
-        ("Motivo da perda", "Obrigatório quando a Etapa for Perdido."),
-        ("Valor estimado (R$)", 'Aceita 3200, 3.200 ou 3.200,00. Pode deixar o "R$".'),
-        ("Duplicados", "Lead com o mesmo e-mail ou telefone de um que já está no funil "
-                       "não é importado de novo."),
+        ("Obrigatório", "Só NOME LEAD. As outras colunas podem ficar vazias."),
+        ("LEAD ID", "Código do lead na operação. Se o LEAD ID já existir no funil, a linha "
+                    "ATUALIZA esse lead (status, data da visita, OBS...) em vez de criar outro. "
+                    "Célula vazia não apaga o que já está gravado."),
+        ("DATA VISITA", "Formato 05/10/2026."),
+        ("STATUS", "Escolha na lista. Vazio = A VISITAR."),
+    ]
+    for st in funil.STATUS:
+        detalhe = st.descricao + (" — exige MOTIVO." if st.pede_motivo else "")
+        texto.append(("   " + st.rotulo.upper(), detalhe))
+    texto += [
+        ("MOTIVO", "Obrigatório quando o STATUS for SEM INTERESSE."),
+        ("Colunas opcionais", "TELEFONE em diante (cabeçalho mais claro). Pode apagar as que "
+                              "não usa."),
+        ("Sem LEAD ID", "Lead com o mesmo e-mail ou telefone de um que já está no funil não "
+                        "é importado de novo."),
         ("Limite", f"Até {LIMITE_LINHAS} leads por arquivo. Salve como .xlsx ou .csv."),
-        ("Antes de gravar", "O sistema mostra uma prévia com o que entra e o que tem erro, "
-                            "linha por linha. Nada é gravado até você confirmar."),
+        ("Antes de gravar", "O sistema mostra uma prévia do que entra, do que muda e do que "
+                            "tem erro, linha por linha. Nada é gravado até você confirmar."),
     ]
     for i, (a, b) in enumerate(texto, start=1):
-        instrucoes.cell(row=i, column=1, value=a).font = Font(bold=True)
+        instrucoes.cell(row=i, column=1, value=a).font = Font(bold=not a.startswith("   "))
         instrucoes.cell(row=i, column=2, value=b).alignment = Alignment(wrap_text=True)
 
     saida = io.BytesIO()

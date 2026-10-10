@@ -8,6 +8,8 @@ from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from .funil import CHAVES as STATUS_FUNIL, INICIAL as STATUS_INICIAL
+
 Str1 = Annotated[str, Field(min_length=1, max_length=160, strip_whitespace=True)]
 StrOpt = Annotated[str, Field(default="", max_length=400, strip_whitespace=True)]
 Money = Annotated[float, Field(ge=0, le=10_000_000)]
@@ -22,7 +24,8 @@ RuleType = Literal["taxa_fixa", "valor_km", "comissao_entrega"]
 PaymentStatus = Literal["pendente", "pago", "atrasado", "cancelado"]
 PaymentMethod = Literal["PIX", "Transferência", "Dinheiro", "Boleto"]
 Role = Literal["admin", "manager"]
-LeadStage = Literal["novo", "contatado", "negociacao", "proposta", "ganho", "perdido"]
+# Status da visita de campo; a lista vive em app/funil.py.
+LeadStage = Literal[STATUS_FUNIL]
 LeadSource = Literal["indicacao", "instagram", "prospeccao", "site", "whatsapp", "evento", "outro"]
 ActivityKind = Literal["tarefa", "interacao"]
 ActivityType = Literal["ligacao", "whatsapp", "email", "reuniao", "visita", "nota", "tarefa"]
@@ -195,11 +198,30 @@ class LeadInput(BaseModel):
     city: StrOpt = ""
     category: StrOpt = ""
     source: LeadSource = "prospeccao"
-    stage: LeadStage = "novo"
+    stage: LeadStage = STATUS_INICIAL
     estimated_value: Money = 0.0
     owner_name: StrOpt = ""
     notes: StrOpt = ""
     lost_reason: StrOpt = ""
+    # Trabalho de campo (a planilha da operação: LEAD ID, ENDEREÇO, BAIRRO,
+    # BD ID, NOME BD, LIDER, DATA VISITA).
+    codigo_externo: Annotated[str, Field(default="", max_length=60)] = ""
+    endereco: StrOpt = ""
+    bairro: Annotated[str, Field(default="", max_length=120)] = ""
+    bd_id: Annotated[str, Field(default="", max_length=60)] = ""
+    bd_nome: Annotated[str, Field(default="", max_length=120)] = ""
+    lider: Annotated[str, Field(default="", max_length=120)] = ""
+    data_visita: Optional[date] = None
+
+    @field_validator(
+        "codigo_externo", "endereco", "bairro", "bd_id", "bd_nome", "lider", mode="before"
+    )
+    @classmethod
+    def sem_espacos_nas_pontas(cls, v):
+        # O LEAD ID é chave de deduplicação: " 12345678" e "12345678" têm de
+        # ser o mesmo lead. (O strip_whitespace dos tipos acima é ignorado
+        # pelo Pydantic 2 — ver o aviso nos testes.)
+        return v.strip() if isinstance(v, str) else v
 
 
 class LeadStagePatch(BaseModel):

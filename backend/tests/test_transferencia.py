@@ -164,6 +164,8 @@ def test_transferencia_de_ponta_a_ponta():
     assert [c["id"] for c in d["contratos"]] == ["c1"]
     # NULL em coluna NOT NULL caiu no DEFAULT do schema.
     assert d["lead"]["converted_restaurant_id"] == ""
+    # Etapa do funil antigo convertida para o status da visita de campo.
+    assert d["lead"]["stage"] == "ativado"
     assert d["user"]["id"] == "65f0c0ffee000000000000aa"
     # O contador fica acima do maior código copiado.
     assert d["contador"] == 41

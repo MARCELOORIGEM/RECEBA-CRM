@@ -204,9 +204,12 @@ CREATE TABLE IF NOT EXISTS leads (
     source                  TEXT NOT NULL DEFAULT 'prospeccao'
                             CHECK (source IN ('indicacao', 'instagram', 'prospeccao', 'site',
                                               'whatsapp', 'evento', 'outro')),
-    stage                   TEXT NOT NULL DEFAULT 'novo'
-                            CHECK (stage IN ('novo', 'contatado', 'negociacao', 'proposta',
-                                             'ganho', 'perdido')),
+    -- Status da visita de campo (app/funil.py). A coluna segue chamada stage.
+    stage                   TEXT NOT NULL DEFAULT 'a_visitar'
+                            CHECK (stage IN ('a_visitar', 'nao_localizado', 'fechado_no_local', 'responsavel_ausente',
+                                             'colhendo_dados', 'reuniao', 'segunda_visita', 'aguardando_documentos',
+                                             'cadastro_enviado', 'ativado', 'sem_interesse', 'ja_parceiro',
+                                             'fora_da_area')),
     estimated_value         DOUBLE PRECISION NOT NULL DEFAULT 0 CHECK (estimated_value >= 0),
     owner_name              TEXT NOT NULL DEFAULT '',
     notes                   TEXT NOT NULL DEFAULT '',
@@ -215,6 +218,16 @@ CREATE TABLE IF NOT EXISTS leads (
     -- só se lê inteiro, nunca filtrado por dentro — JSONB serve bem.
     stage_history           JSONB NOT NULL DEFAULT '[]'::jsonb,
     converted_restaurant_id TEXT NOT NULL DEFAULT '',
+    -- Trabalho de campo: o lead é um restaurante que um BD visita.
+    -- codigo_externo é o "LEAD ID" da planilha da operação; único quando
+    -- preenchido (índice em 005), é por ele que a reimportação não duplica.
+    codigo_externo          TEXT NOT NULL DEFAULT '',
+    endereco                TEXT NOT NULL DEFAULT '',
+    bairro                  TEXT NOT NULL DEFAULT '',
+    bd_id                   TEXT NOT NULL DEFAULT '',
+    bd_nome                 TEXT NOT NULL DEFAULT '',
+    lider                   TEXT NOT NULL DEFAULT '',
+    data_visita             DATE,
     origem                  TEXT NOT NULL DEFAULT '',
     origem_form_id          TEXT NOT NULL DEFAULT '',
     extra_fields            JSONB NOT NULL DEFAULT '{}'::jsonb,

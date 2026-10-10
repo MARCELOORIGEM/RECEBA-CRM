@@ -51,7 +51,7 @@ const NAV = [
 
 const TITULOS = {
   "/": ["Dashboard", "Visão geral da operação"],
-  "/funil": ["Funil de Vendas", "Prospecção até o fechamento"],
+  "/funil": ["Funil de Campo", "Carteira de visitas dos BDs, do lead à ativação"],
   "/atividades": ["Atividades", "Tarefas e follow-ups"],
   "/restaurantes": ["Restaurantes", "Parceiros contratados"],
   "/entregadores": ["Entregadores", "Time de entrega"],

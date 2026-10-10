@@ -29,7 +29,7 @@ router = APIRouter(prefix="/forms", tags=["formulários"], dependencies=[Depends
 CAMPOS_DO_DESTINO = {
     "lead": {
         "name", "contact_name", "phone", "email", "city", "category",
-        "source", "estimated_value", "notes",
+        "source", "estimated_value", "notes", "endereco", "bairro",
     },
     "restaurante": {
         "name", "category", "contact_person", "phone", "email", "cnpj",

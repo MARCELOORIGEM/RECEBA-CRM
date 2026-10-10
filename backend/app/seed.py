@@ -38,13 +38,13 @@ DRIVERS = [
 ]
 
 LEADS = [
-    ("Padaria Estrela", "Seu Antônio", "Padaria", "São Paulo", "indicacao", "negociacao", 3200.0),
-    ("Temakeria Onda", "Vivian Sato", "Japonesa", "Santo André", "instagram", "proposta", 5400.0),
-    ("Burger do Vale", "Diego Prado", "Hamburgueria", "São Bernardo", "prospeccao", "contatado", 4100.0),
-    ("Marmitaria Bom Prato", "Cleide Alves", "Comida Caseira", "Guarulhos", "whatsapp", "novo", 2600.0),
-    ("Pastelaria Central", "Wang Li", "Pastelaria", "São Paulo", "site", "novo", 1900.0),
-    ("Doce Encanto", "Renata Dias", "Confeitaria", "Osasco", "indicacao", "ganho", 2300.0),
-    ("Espeto do Zé", "José Carlos", "Churrascaria", "Diadema", "evento", "perdido", 1500.0),
+    ("Padaria Estrela", "Seu Antônio", "Padaria", "São Paulo", "indicacao", "reuniao", 3200.0),
+    ("Temakeria Onda", "Vivian Sato", "Japonesa", "Santo André", "instagram", "cadastro_enviado", 5400.0),
+    ("Burger do Vale", "Diego Prado", "Hamburgueria", "São Bernardo", "prospeccao", "colhendo_dados", 4100.0),
+    ("Marmitaria Bom Prato", "Cleide Alves", "Comida Caseira", "Guarulhos", "whatsapp", "a_visitar", 2600.0),
+    ("Pastelaria Central", "Wang Li", "Pastelaria", "São Paulo", "site", "nao_localizado", 1900.0),
+    ("Doce Encanto", "Renata Dias", "Confeitaria", "Osasco", "indicacao", "ativado", 2300.0),
+    ("Espeto do Zé", "José Carlos", "Churrascaria", "Diadema", "evento", "sem_interesse", 1500.0),
 ]
 
 
@@ -285,7 +285,7 @@ async def seed_demo() -> None:
                 "phone": f"(11) 9{random.randint(1000, 9999)}-{random.randint(1000, 9999)}",
                 "city": cidade, "category": cat, "source": origem, "stage": etapa,
                 "estimated_value": valor, "owner_name": "Gestor Operacional",
-                "lost_reason": "Achou a comissão alta" if etapa == "perdido" else "",
+                "lost_reason": "Achou a comissão alta" if etapa == "sem_interesse" else "",
                 "stage_history": [{"stage": etapa, "at": criado.isoformat(), "by": "seed"}],
                 "created_at": criado, "updated_at": criado, "created_by": "seed",
             })

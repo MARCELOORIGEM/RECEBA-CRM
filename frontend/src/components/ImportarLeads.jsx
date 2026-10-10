@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertTriangle, CheckCircle2, Copy, Download, FileSpreadsheet, Loader2, Upload, XCircle,
+  AlertTriangle, CheckCircle2, Copy, Download, FileSpreadsheet, Loader2, RefreshCw, Upload,
+  XCircle,
 } from "lucide-react";
-import { api, apiError, brl } from "@/lib/api";
+import { api, apiError } from "@/lib/api";
+import { dataBr, rotuloStatus } from "@/lib/funil";
 import { Button } from "@/components/ui/button";
 import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
@@ -11,15 +13,6 @@ import {
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-const ORIGEM = {
-  indicacao: "Indicação", instagram: "Instagram", prospeccao: "Prospecção ativa", site: "Site",
-  whatsapp: "WhatsApp", evento: "Evento", outro: "Outro",
-};
-const ETAPA = {
-  novo: "Novo", contatado: "Contatado", negociacao: "Em negociação", proposta: "Proposta",
-  ganho: "Ganho", perdido: "Perdido",
-};
 
 /**
  * Baixa um arquivo da API pela sessão do usuário.
@@ -87,7 +80,7 @@ export function BaixarPlanilha() {
           className="flex-col items-start gap-0.5 py-2"
         >
           <span className="text-sm text-slate-100">Funil atual</span>
-          <span className="text-xs text-slate-500">Os leads de hoje, no mesmo formato do modelo</span>
+          <span className="text-xs text-slate-500">Os leads de hoje no mesmo formato — edite o STATUS e importe de volta</span>
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -172,7 +165,10 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
     setCarregando(true);
     try {
       const r = await enviar(arquivo, false);
-      toast.success(`${r.importados} lead(s) importado(s) para o funil`);
+      const partes = [];
+      if (r.importados) partes.push(`${r.importados} novo(s)`);
+      if (r.atualizados_gravados) partes.push(`${r.atualizados_gravados} atualizado(s)`);
+      toast.success(`Planilha importada: ${partes.join(" e ")}`);
       onImportado?.();
       limpar();
       onFechar();
@@ -242,7 +238,8 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
                 {carregando ? `Lendo ${arquivo?.name}…` : "Clique para escolher ou arraste o arquivo aqui"}
               </span>
               <span className="text-xs text-slate-500">
-                Excel (.xlsx) ou CSV • até 2.000 leads • nada é gravado antes de você conferir
+                Excel (.xlsx) ou CSV • até 2.000 leads • LEAD ID que já existe atualiza o lead •
+                nada é gravado antes de você conferir
               </span>
             </button>
             <input
@@ -269,11 +266,17 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
               <strong className="text-slate-200">{arquivo?.name}</strong> — {previa.total} linha(s)
               com dados. Confira antes de importar.
             </p>
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Contador icon={CheckCircle2} valor={previa.novos} rotulo="leads novos para importar" tom="text-emerald-400" />
-              <Contador icon={AlertTriangle} valor={previa.duplicados.length} rotulo="já estão no funil (ignorados)" tom="text-amber-400" />
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Contador icon={CheckCircle2} valor={previa.novos} rotulo="leads novos" tom="text-emerald-400" />
+              <Contador icon={RefreshCw} valor={previa.atualizados.length} rotulo="serão atualizados (mesmo LEAD ID)" tom="text-sky-400" />
+              <Contador icon={AlertTriangle} valor={previa.duplicados.length} rotulo="repetidos (ignorados)" tom="text-amber-400" />
               <Contador icon={XCircle} valor={previa.erros.length} rotulo="com erro (ignorados)" tom="text-red-400" />
             </div>
+            {previa.inalterados > 0 && (
+              <p className="text-xs text-slate-500">
+                {previa.inalterados} lead(s) da planilha já estão no funil exatamente iguais — nada muda neles.
+              </p>
+            )}
 
             {previa.colunas_ignoradas.length > 0 && (
               <p className="rounded-lg border border-slate-800 bg-slate-950/40 p-2 text-xs text-slate-400">
@@ -290,7 +293,7 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
                   <table className="w-full text-left text-xs">
                     <thead className="bg-slate-950/60 text-slate-500">
                       <tr>
-                        {["Linha", "Nome", "Contato", "Telefone", "Cidade", "Origem", "Etapa", "Valor"].map((h) => (
+                        {["Linha", "Lead ID", "Nome lead", "Bairro", "Nome BD", "Líder", "Data visita", "Status"].map((h) => (
                           <th key={h} className="px-2 py-2 font-medium">{h}</th>
                         ))}
                       </tr>
@@ -299,13 +302,13 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
                       {previa.previa.map((l) => (
                         <tr key={l.linha} className="border-t border-slate-800 text-slate-300">
                           <td className="px-2 py-1.5 font-mono text-slate-500">{l.linha}</td>
+                          <td className="px-2 py-1.5 font-mono">{l.codigo_externo || "—"}</td>
                           <td className="px-2 py-1.5 text-slate-100">{l.name}</td>
-                          <td className="px-2 py-1.5">{l.contact_name || "—"}</td>
-                          <td className="px-2 py-1.5 whitespace-nowrap">{l.phone || "—"}</td>
-                          <td className="px-2 py-1.5">{l.city || "—"}</td>
-                          <td className="px-2 py-1.5">{ORIGEM[l.source]}</td>
-                          <td className="px-2 py-1.5">{ETAPA[l.stage]}</td>
-                          <td className="px-2 py-1.5 whitespace-nowrap">{brl(l.estimated_value)}</td>
+                          <td className="px-2 py-1.5">{l.bairro || "—"}</td>
+                          <td className="px-2 py-1.5">{l.bd_nome || "—"}</td>
+                          <td className="px-2 py-1.5">{l.lider || "—"}</td>
+                          <td className="px-2 py-1.5 whitespace-nowrap">{dataBr(l.data_visita) || "—"}</td>
+                          <td className="px-2 py-1.5 whitespace-nowrap">{rotuloStatus(l.stage)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -314,8 +317,30 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
               </div>
             )}
 
+            {previa.atualizados.length > 0 && (
+              <div className="space-y-2" data-testid="importar-atualizados">
+                <p className="text-sm font-medium text-sky-400">
+                  Serão atualizados — o LEAD ID já está no funil
+                </p>
+                <ul className="max-h-48 space-y-1.5 overflow-y-auto rounded-lg border border-slate-800 bg-slate-950/50 p-2 text-xs">
+                  {previa.atualizados.map((a) => (
+                    <li key={`${a.linha}-${a.codigo}`}>
+                      <span className="font-mono text-slate-500">linha {a.linha}</span>{" "}
+                      <strong className="text-slate-200">{a.nome}</strong>{" "}
+                      <span className="font-mono text-slate-500">({a.codigo})</span>
+                      <ul className="ml-4 mt-0.5 list-disc text-slate-400">
+                        {a.mudancas.map((m) => (
+                          <li key={m}>{m}</li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             <ListaDeLinhas titulo="Com erro — corrija na planilha e importe de novo" itens={previa.erros} tom="text-red-400" testid="importar-erros" />
-            <ListaDeLinhas titulo="Já estão no funil (mesmo e-mail ou telefone)" itens={previa.duplicados} tom="text-amber-400" testid="importar-duplicados" />
+            <ListaDeLinhas titulo="Repetidos — já estão no funil ou duplicados na planilha" itens={previa.duplicados} tom="text-amber-400" testid="importar-duplicados" />
             {(previa.erros.length > 0 || previa.duplicados.length > 0) && (
               <Button variant="ghost" size="sm" onClick={copiarErros} className="h-7 gap-1.5 text-xs text-slate-400">
                 <Copy className="h-3.5 w-3.5" /> Copiar lista de linhas ignoradas
@@ -344,12 +369,20 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
           {previa && (
             <Button
               onClick={confirmar}
-              disabled={carregando || previa.novos === 0}
+              disabled={carregando || previa.novos + previa.atualizados.length === 0}
               data-testid="importar-confirmar"
               className="bg-primary hover:bg-orange-600 text-white gap-2"
             >
               {carregando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {previa.novos === 0 ? "Nada para importar" : `Importar ${previa.novos} lead(s)`}
+              {previa.novos + previa.atualizados.length === 0
+                ? "Nada para importar"
+                : (() => {
+                    const texto = [
+                      previa.novos ? `importar ${previa.novos} novo(s)` : "",
+                      previa.atualizados.length ? `atualizar ${previa.atualizados.length}` : "",
+                    ].filter(Boolean).join(" e ");
+                    return texto.charAt(0).toUpperCase() + texto.slice(1);
+                  })()}
             </Button>
           )}
         </DialogFooter>

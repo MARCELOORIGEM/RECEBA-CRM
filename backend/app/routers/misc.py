@@ -18,8 +18,8 @@ ALVOS_DA_BUSCA = [
      "Entregador", "name", ["vehicle_type", "status"], "/entregadores", "entregadores"),
     ("orders", ["code", "customer_name", "restaurant_name"],
      "Pedido", "code", ["restaurant_name", "customer_name"], "/pedidos", "pedidos"),
-    ("leads", ["name", "contact_name", "city"],
-     "Lead", "name", ["city", "stage"], "/funil", "funil"),
+    ("leads", ["name", "codigo_externo", "contact_name", "bairro", "city"],
+     "Lead", "name", ["codigo_externo", "bairro", "bd_nome"], "/funil", "funil"),
     ("payments", ["creditor"],
      "Pagamento", "creditor", ["status", "due_date"], "/contratos-pagamentos", "financeiro"),
 ]
