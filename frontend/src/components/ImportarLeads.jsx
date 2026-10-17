@@ -238,7 +238,7 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
                 {carregando ? `Lendo ${arquivo?.name}…` : "Clique para escolher ou arraste o arquivo aqui"}
               </span>
               <span className="text-xs text-slate-500">
-                Excel (.xlsx) ou CSV • até 2.000 leads • LEAD ID que já existe atualiza o lead •
+                Excel (.xlsx) ou CSV • sem limite de leads • LEAD ID que já existe atualiza o lead •
                 nada é gravado antes de você conferir
               </span>
             </button>
@@ -268,9 +268,9 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
             </p>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Contador icon={CheckCircle2} valor={previa.novos} rotulo="leads novos" tom="text-emerald-400" />
-              <Contador icon={RefreshCw} valor={previa.atualizados.length} rotulo="serão atualizados (mesmo LEAD ID)" tom="text-sky-400" />
-              <Contador icon={AlertTriangle} valor={previa.duplicados.length} rotulo="repetidos (ignorados)" tom="text-amber-400" />
-              <Contador icon={XCircle} valor={previa.erros.length} rotulo="com erro (ignorados)" tom="text-red-400" />
+              <Contador icon={RefreshCw} valor={previa.total_atualizados} rotulo="serão atualizados (mesmo LEAD ID)" tom="text-sky-400" />
+              <Contador icon={AlertTriangle} valor={previa.total_duplicados} rotulo="repetidos (ignorados)" tom="text-amber-400" />
+              <Contador icon={XCircle} valor={previa.total_erros} rotulo="com erro (ignorados)" tom="text-red-400" />
             </div>
             {previa.inalterados > 0 && (
               <p className="text-xs text-slate-500">
@@ -317,7 +317,7 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
               </div>
             )}
 
-            {previa.atualizados.length > 0 && (
+            {previa.total_atualizados > 0 && (
               <div className="space-y-2" data-testid="importar-atualizados">
                 <p className="text-sm font-medium text-sky-400">
                   Serão atualizados — o LEAD ID já está no funil
@@ -339,6 +339,12 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
               </div>
             )}
 
+            {Math.max(previa.total_erros, previa.total_duplicados, previa.total_atualizados) >
+              previa.erros.length + 0 && (
+              <p className="text-xs text-slate-500">
+                Listas abaixo mostram até 500 linhas de cada grupo; os números acima são os totais.
+              </p>
+            )}
             <ListaDeLinhas titulo="Com erro — corrija na planilha e importe de novo" itens={previa.erros} tom="text-red-400" testid="importar-erros" />
             <ListaDeLinhas titulo="Repetidos — já estão no funil ou duplicados na planilha" itens={previa.duplicados} tom="text-amber-400" testid="importar-duplicados" />
             {(previa.erros.length > 0 || previa.duplicados.length > 0) && (
@@ -369,17 +375,17 @@ export function ImportarLeads({ aberto, onFechar, onImportado }) {
           {previa && (
             <Button
               onClick={confirmar}
-              disabled={carregando || previa.novos + previa.atualizados.length === 0}
+              disabled={carregando || previa.novos + previa.total_atualizados === 0}
               data-testid="importar-confirmar"
               className="bg-primary hover:bg-orange-600 text-white gap-2"
             >
               {carregando ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
-              {previa.novos + previa.atualizados.length === 0
+              {previa.novos + previa.total_atualizados === 0
                 ? "Nada para importar"
                 : (() => {
                     const texto = [
                       previa.novos ? `importar ${previa.novos} novo(s)` : "",
-                      previa.atualizados.length ? `atualizar ${previa.atualizados.length}` : "",
+                      previa.total_atualizados ? `atualizar ${previa.total_atualizados}` : "",
                     ].filter(Boolean).join(" e ");
                     return texto.charAt(0).toUpperCase() + texto.slice(1);
                   })()}

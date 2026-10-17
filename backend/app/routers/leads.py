@@ -159,6 +159,14 @@ _ROTULO_IMPORTACAO = {
 }
 
 
+# Sem limite de linhas na planilha: a prévia lista no máximo isto de cada
+# grupo (erros, repetidos, atualizações) e manda os totais à parte. Cinquenta
+# mil erros listados travariam o navegador sem ajudar ninguém a corrigir.
+MAX_DETALHES = 500
+# Uma planilha grande leva mais que os 30 s que valem para as outras rotas.
+TEMPO_IMPORTACAO = 900
+
+
 def _mostrar(campo: str, valor) -> str:
     if valor in (None, ""):
         return "—"
@@ -282,14 +290,17 @@ async def importar_planilha(
     resposta = {
         "total": resultado.total,
         "novos": len(novos),
+        "total_atualizados": len(atualizacoes),
+        "total_duplicados": len(duplicados),
+        "total_erros": len(resultado.erros),
         "atualizados": [
             {"linha": a["linha"], "nome": a["lead"]["name"],
              "codigo": a["lead"]["codigo_externo"], "mudancas": _descrever(a)}
-            for a in atualizacoes
+            for a in atualizacoes[:MAX_DETALHES]
         ],
         "inalterados": inalterados,
-        "duplicados": duplicados,
-        "erros": resultado.erros,
+        "duplicados": duplicados[:MAX_DETALHES],
+        "erros": resultado.erros[:MAX_DETALHES],
         "colunas_ignoradas": resultado.colunas_ignoradas,
         "previa": [
             {k: lead.get(k) for k in ("linha", "codigo_externo", "name", "bairro", "bd_nome",
@@ -318,28 +329,40 @@ async def importar_planilha(
     ]
     campos = ", ".join(_COLUNAS_IMPORTACAO)
     marcadores = ", ".join(f"${i}" for i in range(1, len(_COLUNAS_IMPORTACAO) + 1))
+    # Atualizações num comando só, como as inserções: cada linha leva TODOS os
+    # campos atualizáveis (o valor novo onde a planilha mudou, o atual onde
+    # não), para que todas usem o mesmo UPDATE e possam ir num executemany.
+    # Uma ida ao banco por lead levaria minutos numa planilha grande.
+    sets = [f"{repo.coluna('leads', c)} = ${i}" for i, c in enumerate(_ATUALIZAVEIS, start=1)]
+    n = len(_ATUALIZAVEIS)
+    sql_atualizacao = (
+        f"UPDATE leads SET {', '.join(sets)}, updated_at = ${n + 1}, "
+        # Troca de status entra no histórico; sem troca, concatena lista vazia.
+        f"stage_history = stage_history || ${n + 2}::jsonb WHERE id = ${n + 3}"
+    )
+    linhas_atualizacao = [
+        (
+            *({**a["lead"], **a["mudancas"]}[c] for c in _ATUALIZAVEIS),
+            agora,
+            [{"stage": a["mudancas"]["stage"], "at": agora_iso, "by": autor}]
+            if "stage" in a["mudancas"] else [],
+            a["lead"]["id"],
+        )
+        for a in atualizacoes
+    ]
+
     # Tudo numa transação: um erro no lead 300 não deixa 299 gravados e a
     # pessoa sem saber de onde recomeçar.
     async with pg.pool().acquire() as con:
         async with con.transaction():
             if linhas:
                 await con.executemany(
-                    f"INSERT INTO leads ({campos}) VALUES ({marcadores})", linhas
+                    f"INSERT INTO leads ({campos}) VALUES ({marcadores})", linhas,
+                    timeout=TEMPO_IMPORTACAO,
                 )
-            for a in atualizacoes:
-                sets, args = [], []
-                for campo, valor in a["mudancas"].items():
-                    args.append(valor)
-                    sets.append(f"{repo.coluna('leads', campo)} = ${len(args)}")
-                args.append(agora)
-                sets.append(f"updated_at = ${len(args)}")
-                if "stage" in a["mudancas"]:
-                    # A troca de status entra no histórico, como na tela.
-                    args.append([{"stage": a["mudancas"]["stage"], "at": agora_iso, "by": autor}])
-                    sets.append(f"stage_history = stage_history || ${len(args)}::jsonb")
-                args.append(a["lead"]["id"])
-                await con.execute(
-                    f"UPDATE leads SET {', '.join(sets)} WHERE id = ${len(args)}", *args
+            if linhas_atualizacao:
+                await con.executemany(
+                    sql_atualizacao, linhas_atualizacao, timeout=TEMPO_IMPORTACAO
                 )
 
     await audit.record(

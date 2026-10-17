@@ -34,8 +34,13 @@ from pydantic import ValidationError
 from . import funil
 from .models import LeadInput
 
-LIMITE_LINHAS = 2000
-LIMITE_BYTES = 5 * 1024 * 1024
+# Sem limite de linhas. O único teto é o tamanho do arquivo, e ele existe
+# para um arquivo errado (um vídeo, um backup) não ocupar a memória do
+# servidor — 50 MB de planilha são centenas de milhares de leads.
+LIMITE_BYTES = 50 * 1024 * 1024
+# Até onde a lista suspensa de STATUS vai no modelo. Não limita a importação:
+# só é a faixa de linhas em que o Excel oferece a lista ao preencher.
+LINHAS_COM_LISTA = 50_000
 
 # Origem e status com os MESMOS nomes da tela do Funil. A planilha mostra o
 # rótulo; o banco guarda a chave.
@@ -170,7 +175,10 @@ def _linhas_csv(dados: bytes) -> list[list[Any]]:
 def ler_arquivo(dados: bytes, nome: str) -> list[list[Any]]:
     """Linhas cruas do arquivo, cabeçalho incluído."""
     if len(dados) > LIMITE_BYTES:
-        raise PlanilhaInvalida("Arquivo maior que 5 MB. Divida em partes menores.")
+        raise PlanilhaInvalida(
+            "Arquivo maior que 50 MB — isso não parece uma planilha de leads. "
+            "Confira se escolheu o arquivo certo."
+        )
     if not dados:
         raise PlanilhaInvalida("O arquivo está vazio.")
     # Pelo conteúdo, não pela extensão: .xlsx é um zip e começa com "PK".
@@ -277,10 +285,6 @@ def interpretar(linhas: list[list[Any]]) -> Resultado:
         if not any(_texto(v) for v in bruto.values()):
             continue  # linha em branco no meio da planilha
         res.total += 1
-        if res.total > LIMITE_LINHAS:
-            raise PlanilhaInvalida(
-                f"A planilha tem mais de {LIMITE_LINHAS} leads. Divida em arquivos menores."
-            )
 
         dados: dict[str, Any] = {}
         problemas: list[str] = []
@@ -399,7 +403,7 @@ def gerar_modelo(leads: list[dict] | None = None) -> bytes:
 
     # Listas suspensas: o BD escolhe o status e a origem em vez de digitar —
     # e não inventa "Fechou" ou "Insta".
-    ultima = max(LIMITE_LINHAS + 1, len(registros) + 1)
+    ultima = max(LINHAS_COM_LISTA + 1, len(registros) + 1)
     for campo, mapa in _ROTULOS.items():
         letra = get_column_letter(next(i for i, c in enumerate(COLUNAS, 1) if c.campo == campo))
         lista = DataValidation(
@@ -432,7 +436,7 @@ def gerar_modelo(leads: list[dict] | None = None) -> bytes:
                               "não usa."),
         ("Sem LEAD ID", "Lead com o mesmo e-mail ou telefone de um que já está no funil não "
                         "é importado de novo."),
-        ("Limite", f"Até {LIMITE_LINHAS} leads por arquivo. Salve como .xlsx ou .csv."),
+        ("Tamanho", "Sem limite de leads. Salve como .xlsx ou .csv (até 50 MB por arquivo)."),
         ("Antes de gravar", "O sistema mostra uma prévia do que entra, do que muda e do que "
                             "tem erro, linha por linha. Nada é gravado até você confirmar."),
     ]

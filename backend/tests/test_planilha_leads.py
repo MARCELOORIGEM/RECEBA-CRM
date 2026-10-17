@@ -187,3 +187,10 @@ def test_sql_e_funil_tem_os_mesmos_status():
     legado = dict(re.findall(r"WHEN '(\w+)' THEN '(\w+)'",
                              (sql / "005_funil_campo.sql").read_text(encoding="utf-8")))
     assert legado == funil.LEGADO
+
+
+def test_sem_limite_de_linhas():
+    """O limite de 2.000 leads por arquivo saiu: 5.000 linhas são lidas inteiras."""
+    linhas = ["LEAD ID;NOME LEAD;STATUS"] + [f"{i};Lead {i};REUNIÃO" for i in range(5000)]
+    res = _ler("\r\n".join(linhas).encode("cp1252"))
+    assert res.total == len(res.validos) == 5000 and not res.erros
