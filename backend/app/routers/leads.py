@@ -456,11 +456,14 @@ async def convert_lead(lid: str, user: dict = Depends(get_current_user)):
         ])),
         "created_by": user["name"],
     })
+    # Quem já está num fechamento (contrato assinado, entrando na base...)
+    # fica onde está; os demais vão para "Contrato assinado".
+    novo_status = lead["stage"] if lead["stage"] in funil.GANHOS else funil.CONVERSAO
     lead_atualizado = await _mover(
         lid,
-        {"stage": funil.GANHO, "converted_restaurant_id": restaurante["id"],
+        {"stage": novo_status, "converted_restaurant_id": restaurante["id"],
          "updated_at": now_utc()},
-        _etapa(funil.GANHO, user["name"]),
+        _etapa(novo_status, user["name"]),
     )
     await repo.atualizar_onde(
         "activities",

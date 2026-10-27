@@ -6,7 +6,7 @@ import {
   Loader2, MapPin, MoveRight, Plus, Search, Sheet, Trash2, UserPlus, Users, XCircle,
 } from "lucide-react";
 import { api, apiError, brl, getList } from "@/lib/api";
-import { GANHO, INICIAL, ORIGENS, POR_CHAVE, STATUS, dataBr } from "@/lib/funil";
+import { INICIAL, ORIGENS, POR_CHAVE, STATUS, dataBr, eGanho } from "@/lib/funil";
 import { useAuth } from "@/context/AuthContext";
 import { useConfirm } from "@/components/ConfirmDialog";
 import { BaixarPlanilha, ImportarLeads } from "@/components/ImportarLeads";
@@ -317,7 +317,7 @@ export default function Pipeline() {
           icon={XCircle}
           label="Descartados"
           value={funil?.perdidos ?? "—"}
-          hint="Sem interesse, já parceiro, fora da área"
+          hint="Sem interesse, exclusividade, sem CNPJ, fora do perímetro…"
           tone="text-red-400"
         />
       </div>
@@ -479,7 +479,7 @@ export default function Pipeline() {
                       {lead.notes || "—"}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-right">
-                      {lead.stage === GANHO && !lead.converted_restaurant_id && (
+                      {eGanho(lead.stage) && !lead.converted_restaurant_id && (
                         <Button
                           size="sm"
                           variant="ghost"
@@ -636,7 +636,7 @@ export default function Pipeline() {
                               ))}
                             </DropdownMenuContent>
                           </DropdownMenu>
-                          {lead.stage === GANHO && !lead.converted_restaurant_id && (
+                          {eGanho(lead.stage) && !lead.converted_restaurant_id && (
                             <Button
                               size="sm"
                               variant="ghost"

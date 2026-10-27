@@ -106,7 +106,8 @@ class TestFunil:
         r = admin.post(f"{API}/leads/{lead['id']}/convert", timeout=TIMEOUT)
         assert r.status_code == 200
         corpo = r.json()
-        assert corpo["lead"]["stage"] == "ativado"
+        # Virar cliente fecha como contrato assinado.
+        assert corpo["lead"]["stage"] == "contrato_assinado"
         assert corpo["restaurant"]["name"] == lead["name"]
         assert corpo["restaurant"]["status"] == "em_analise"
 
@@ -117,7 +118,7 @@ class TestFunil:
 
     def test_resumo_do_funil(self, admin):
         f = admin.get(f"{API}/leads/funnel", timeout=TIMEOUT).json()
-        assert len(f["stages"]) == 13
+        assert len(f["stages"]) == 26
         assert {s["grupo"] for s in f["stages"]} == {"aberto", "ganho", "perdido"}
         assert 0 <= f["taxa_conversao"] <= 100
         assert f["valor_em_aberto"] >= 0

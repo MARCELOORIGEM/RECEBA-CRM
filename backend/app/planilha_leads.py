@@ -130,8 +130,23 @@ _VALORES["source"].update({"prospeccao ativa": "prospeccao", "insta": "instagram
 # escrever os status: uma planilha antiga ainda importa.
 _VALORES["stage"].update({_chave(k): v for k, v in funil.LEGADO.items()})
 _VALORES["stage"].update({
+    # Nomes que mudaram: planilhas preenchidas com o nome antigo continuam valendo.
+    "fechado no local": "fechado_no_local", "fechado horario": "fechado_no_local",
+    "fora da area": "fora_da_area", "fora do perimetro": "fora_da_area",
+    "aprovado": "contrato_assinado", "assinado": "contrato_assinado",
+    "aguardando assinatura": "aguardando_assinatura",
+    "inexistente": "estabelecimento_inexistente", "nao existe": "estabelecimento_inexistente",
+    "sem cnpj": "sem_cnpj", "nao tem cnpj": "sem_cnpj",
+    "pendencia cnpj": "pendencia_cnpj", "cnpj pendente": "pendencia_cnpj",
+    "exclusivo ifood": "exclusividade_ifood", "exclusividade i food": "exclusividade_ifood",
+    "exclusivo 99food": "exclusividade_99food", "exclusividade 99 food": "exclusividade_99food",
+    "nao tem interesse em delivery": "sem_interesse_delivery",
+    "sem interesse em delivery": "sem_interesse_delivery",
+    "aguardando inicio operacao": "aguardando_inicio_operacao",
+    "aguardando inicio da operacao": "aguardando_inicio_operacao",
+    "visita agendada": "agendado_visita", "reuniao marcada": "agendado_reuniao",
     "em negociacao": "reuniao", "proposta enviada": "cadastro_enviado",
-    "reuniao agendada": "reuniao", "2a visita": "segunda_visita", "2 visita": "segunda_visita",
+    "reuniao agendada": "agendado_reuniao", "2a visita": "segunda_visita", "2 visita": "segunda_visita",
     "retornar": "segunda_visita", "fechado no local": "fechado_no_local",
     "estabelecimento fechado": "fechado_no_local", "nao encontrado": "nao_localizado",
     "aguardando documentacao": "aguardando_documentos", "ativo": "ativado",
@@ -402,13 +417,21 @@ def gerar_modelo(leads: list[dict] | None = None) -> bytes:
         aba.cell(row=linha, column=coluna_data).number_format = "DD/MM/YYYY"
 
     # Listas suspensas: o BD escolhe o status e a origem em vez de digitar —
-    # e não inventa "Fechou" ou "Insta".
+    # e não inventa "Fechou" ou "Insta". As opções ficam numa aba escondida:
+    # escritas direto na regra, o Excel só aceita 255 caracteres, e os nomes
+    # dos status passam disso.
+    listas = livro.create_sheet("Listas")
+    listas.sheet_state = "hidden"
     ultima = max(LINHAS_COM_LISTA + 1, len(registros) + 1)
-    for campo, mapa in _ROTULOS.items():
+    for n_col, campo in enumerate(("stage", "source"), start=1):
+        mapa = _ROTULOS[campo]
+        col_lista = get_column_letter(n_col)
+        for i, rotulo in enumerate(mapa.values(), start=1):
+            listas.cell(row=i, column=n_col, value=rotulo)
         letra = get_column_letter(next(i for i, c in enumerate(COLUNAS, 1) if c.campo == campo))
         lista = DataValidation(
-            type="list", formula1='"' + ",".join(mapa.values()) + '"', allow_blank=True,
-            showErrorMessage=True, errorTitle="Valor fora da lista",
+            type="list", formula1=f"Listas!${col_lista}$1:${col_lista}${len(mapa)}",
+            allow_blank=True, showErrorMessage=True, errorTitle="Valor fora da lista",
             error="Escolha um valor da lista.",
         )
         lista.add(f"{letra}2:{letra}{ultima}")

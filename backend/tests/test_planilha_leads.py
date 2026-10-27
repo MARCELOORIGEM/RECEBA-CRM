@@ -41,6 +41,11 @@ def test_modelo_tem_as_colunas_da_operacao_na_ordem():
     assert titulos[:10] == CABECALHO_OPERACAO.split(";")
     assert titulos == [c.titulo for c in COLUNAS]
     assert len(ws.data_validations.dataValidation) == 2  # STATUS e ORIGEM
+    # As opções vêm da aba escondida (escritas na regra, passariam de 255
+    # caracteres e o Excel recusaria o arquivo).
+    listas = load_workbook(io.BytesIO(gerar_modelo()))["Listas"]
+    assert listas.sheet_state == "hidden"
+    assert [c.value for c in listas["A"]][:3] == ["A VISITAR", "AGENDADO VISITA", "NÃO LOCALIZADO"]
 
 
 def test_modelo_volta_valido():
@@ -67,9 +72,23 @@ def test_planilha_da_operacao_em_csv():
 
 
 @pytest.mark.parametrize("escrito,chave", [
-    ("REUNIÃO", "reuniao"), ("reuniao", "reuniao"), ("Reunião agendada", "reuniao"),
+    ("REUNIÃO", "reuniao"), ("reuniao", "reuniao"), ("Reunião agendada", "agendado_reuniao"),
     ("Não localizado", "nao_localizado"), ("JÁ É PARCEIRO", "ja_parceiro"),
     ("2a visita", "segunda_visita"), ("ATIVADO", "ativado"),
+    # Status pedidos pela operação, escritos como ela escreve.
+    ("AGENDADO VISITA", "agendado_visita"), ("AGENDADO REUNIAO", "agendado_reuniao"),
+    ("CONTRATO ASSINADO", "contrato_assinado"), ("ENTRANDO NA BASE", "entrando_na_base"),
+    ("FECHADO (HORARIO DE FUNCIONAMENTO)", "fechado_no_local"),
+    ("ESTABELECIMENTO INEXISTENTE", "estabelecimento_inexistente"),
+    ("AGUARDANDO ASSINATURA CLIENTE", "aguardando_assinatura"),
+    ("FORA DO PERÍMETRO", "fora_da_area"), ("EXCLUSIVIDADE 99FOOD", "exclusividade_99food"),
+    ("EXCLUSIVIDADE IFOOD", "exclusividade_ifood"),
+    ("NO AGUARDO INICIO OPERAÇÃO", "aguardando_inicio_operacao"),
+    ("TAXA ESPECIAL", "taxa_especial"),
+    ("NAO TEM INTERESSE EM DELIVERY", "sem_interesse_delivery"),
+    ("NÃO POSSUI CNPJ", "sem_cnpj"), ("PENDENCIA REGULARIZAÇÃO CNPJ", "pendencia_cnpj"),
+    # Nomes antigos dos que foram renomeados.
+    ("Fechado no local", "fechado_no_local"), ("Fora da área", "fora_da_area"),
     # Etapas da versão anterior continuam importando.
     ("Novo", "a_visitar"), ("Em negociação", "reuniao"), ("Ganho", "ativado"),
 ])
@@ -194,3 +213,17 @@ def test_sem_limite_de_linhas():
     linhas = ["LEAD ID;NOME LEAD;STATUS"] + [f"{i};Lead {i};REUNIÃO" for i in range(5000)]
     res = _ler("\r\n".join(linhas).encode("cp1252"))
     assert res.total == len(res.validos) == 5000 and not res.erros
+
+
+def test_painel_e_funil_tem_os_mesmos_status():
+    """frontend/src/lib/funil.js lista os mesmos status, na mesma ordem e grupo.
+
+    Um status que existisse só no backend sumiria da tela; só no painel, seria
+    recusado pelo banco na primeira troca.
+    """
+    js = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "lib" / "funil.js").read_text(
+        encoding="utf-8")
+    no_painel = re.findall(r'chave: "(\w+)", rotulo: "([^"]+)", grupo: "(\w+)"', js)
+    assert [(c, r, g) for c, r, g in no_painel] == [
+        (s.chave, s.rotulo, s.grupo) for s in funil.STATUS
+    ]

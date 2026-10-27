@@ -27,10 +27,15 @@ UPDATE leads SET stage = CASE stage
  WHERE stage IN ('novo', 'contatado', 'negociacao', 'proposta', 'ganho', 'perdido');
 
 ALTER TABLE leads ALTER COLUMN stage SET DEFAULT 'a_visitar';
-ALTER TABLE leads ADD CONSTRAINT leads_stage_check CHECK (stage IN ('a_visitar', 'nao_localizado', 'fechado_no_local', 'responsavel_ausente',
-                                             'colhendo_dados', 'reuniao', 'segunda_visita', 'aguardando_documentos',
-                                             'cadastro_enviado', 'ativado', 'sem_interesse', 'ja_parceiro',
-                                             'fora_da_area'));
+ALTER TABLE leads ADD CONSTRAINT leads_stage_check CHECK (stage IN ('a_visitar', 'agendado_visita', 'nao_localizado',
+                                             'fechado_no_local', 'responsavel_ausente', 'segunda_visita',
+                                             'colhendo_dados', 'agendado_reuniao', 'reuniao',
+                                             'taxa_especial', 'pendencia_cnpj', 'aguardando_documentos',
+                                             'cadastro_enviado', 'aguardando_assinatura', 'contrato_assinado',
+                                             'entrando_na_base', 'aguardando_inicio_operacao', 'ativado',
+                                             'sem_interesse', 'sem_interesse_delivery', 'sem_cnpj',
+                                             'estabelecimento_inexistente', 'exclusividade_ifood', 'exclusividade_99food',
+                                             'ja_parceiro', 'fora_da_area'));
 
 -- LEAD ID único quando preenchido: a reimportação da mesma planilha encontra
 -- o lead em vez de criar outro. Vazio fica de fora (lead cadastrado na tela).
